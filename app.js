@@ -1245,7 +1245,11 @@
     $('prompt-form').addEventListener('submit', (event) => { event.preventDefault(); handlePrompt($('prompt-input').value); $('prompt-input').value = ''; });
     $('suggestions').addEventListener('click', (event) => { const button = event.target.closest('[data-prompt]'); if (button) handlePrompt(button.dataset.prompt); });
     $('refresh-insights').addEventListener('click', () => { renderInsights(); showToast('Insights refreshed using the current view.'); });
-    $('theme-toggle').addEventListener('click', () => document.body.classList.toggle('dark'));
+    $('theme-toggle').addEventListener('click', () => {
+      document.body.classList.toggle('dark');
+      syncThemeControl();
+      try { localStorage.setItem('atlas-theme', document.body.classList.contains('dark') ? 'dark' : 'light'); } catch { /* Private browsing can disable storage. */ }
+    });
     $('add-chart').addEventListener('click', addChart);
     $('export-button').addEventListener('click', () => downloadRows(state.rows, `${stripExtension(state.fileName) || 'atlas'}-data.csv`));
     $('table-download').addEventListener('click', () => downloadRows(state.rows, `${stripExtension(state.fileName) || 'atlas'}-data.csv`));
@@ -1272,7 +1276,17 @@
   bindEvents();
   const savedTheme = (() => { try { return localStorage.getItem('atlas-theme'); } catch { return ''; } })();
   if (savedTheme === 'dark') document.body.classList.add('dark');
-  $('theme-toggle').addEventListener('click', () => { try { localStorage.setItem('atlas-theme', document.body.classList.contains('dark') ? 'dark' : 'light'); } catch { /* Private browsing can disable storage. */ } });
+  syncThemeControl();
   try { loadDataset(makeDemoData(), 'Q3 Retail Sales.xlsx', 'Sheet1'); }
   catch (error) { console.error(error); showToast('Could not load the sample dashboard.'); }
+
+  function syncThemeControl() {
+    const dark = document.body.classList.contains('dark');
+    $('theme-toggle').setAttribute('aria-pressed', String(dark));
+    $('theme-toggle').setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+    $('theme-toggle').title = dark ? 'Switch to light mode' : 'Switch to dark mode';
+    $('theme-toggle-label').textContent = dark ? 'Light mode' : 'Dark mode';
+    $('theme-toggle-icon').textContent = dark ? '☀' : '☾';
+    document.querySelector('meta[name="theme-color"]').content = dark ? '#111a2c' : '#f3f6fb';
+  }
 })();

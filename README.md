@@ -1,6 +1,6 @@
 # Atlas spreadsheet dashboard
 
-A browser based dashboard builder for Excel and CSV workbooks. It opens on a sample retail dashboard so the controls are visible before a file is selected.
+A browser based dashboard builder for Excel and CSV workbooks. It opens with an empty workspace; dashboards appear after you upload your own workbook.
 
 ## Run it
 

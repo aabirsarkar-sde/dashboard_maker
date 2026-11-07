@@ -8,9 +8,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20261107-2" />
     <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script defer src="app.js?v=20261107-5"></script>
+    <script defer src="app.js?v=20261107-6"></script>
   </head>
   <body>
     <div class="app-shell">
@@ -29,11 +29,11 @@
         <nav class="side-nav" aria-label="Main navigation">
           <p class="nav-label">WORKSPACE</p>
           <a class="nav-item" href="#overview"><span class="nav-icon">◫</span> Overview</a>
-          <a class="nav-item active" href="#dashboard"><span class="nav-icon">▦</span> Dashboards <span class="nav-count">1</span></a>
+          <a class="nav-item active" href="#dashboard"><span class="nav-icon">▦</span> Dashboards <span class="nav-count" id="nav-count">0</span></a>
           <a class="nav-item" href="#data"><span class="nav-icon">▤</span> Data sources</a>
           <p class="nav-label nav-label-spaced">YOUR DASHBOARDS <button class="mini-plus" id="new-dashboard" aria-label="New dashboard">+</button></p>
-          <a class="nav-item sub-item active-sub" href="#dashboard"><span class="sub-dot"></span><span id="sidebar-dashboard-name">Retail performance</span></a>
-          <a class="nav-item sub-item muted" href="#dashboard"><span class="sub-dot"></span> Monthly snapshot</a>
+          <a class="nav-item sub-item active-sub" id="sidebar-active-dashboard" href="#dashboard" hidden><span class="sub-dot"></span><span id="sidebar-dashboard-name"></span></a>
+          <p class="sidebar-empty-note" id="sidebar-empty-note">Upload a workbook to create dashboards.</p>
         </nav>
 
         <div class="sidebar-bottom">
@@ -44,7 +44,7 @@
             <button id="sidebar-ask">Try AI insights <span>→</span></button>
           </div>
           <a class="nav-item bottom-link" href="#settings"><span class="nav-icon">⚙</span> Settings</a>
-          <div class="profile-row"><div class="profile-avatar">A</div><div><strong>Aabir Sarkar</strong><span>Free plan</span></div><span class="more">···</span></div>
+          <div class="profile-row"><div class="profile-avatar">L</div><div><strong>Local workspace</strong><span>No account connected</span></div></div>
         </div>
       </aside>
 
@@ -54,28 +54,36 @@
           <div class="topbar-actions">
             <span class="saved-state"><span class="saved-dot"></span> Workbook stays in browser</span>
             <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle dark mode" aria-pressed="false" title="Toggle dark mode"><span class="theme-toggle-icon" id="theme-toggle-icon" aria-hidden="true">☾</span><span id="theme-toggle-label">Dark mode</span></button>
-            <button class="avatar-button" title="Account">A</button>
           </div>
         </header>
 
         <div class="page-wrap">
           <section class="page-heading">
             <div class="heading-copy">
-              <div class="eyebrow"><span class="eyebrow-dot"></span> YOUR DASHBOARD</div>
-              <h1 id="dashboard-title">Retail performance</h1>
-              <p id="dashboard-subtitle">A clear view of what’s driving your business.</p>
+              <div class="eyebrow"><span class="eyebrow-dot"></span> YOUR WORKSPACE</div>
+              <h1 id="dashboard-title">Your workspace is ready</h1>
+              <p id="dashboard-subtitle">Upload a workbook to turn its worksheets into interactive dashboards.</p>
             </div>
             <div class="heading-actions">
-              <button class="button button-quiet" id="add-chart"><span>＋</span> Add chart</button>
-              <button class="button button-quiet" id="share-button"><span>↗</span> Share</button>
-              <button class="button button-quiet" id="export-button"><span>⇩</span> Export data</button>
+              <button class="button button-quiet" id="add-chart" hidden><span>＋</span> Add chart</button>
+              <button class="button button-quiet" id="share-button" hidden><span>↗</span> Share</button>
+              <button class="button button-quiet" id="export-button" hidden><span>⇩</span> Export data</button>
               <button class="button button-primary" id="upload-button"><span class="button-plus">+</span> Upload data</button>
               <input type="file" id="file-input" accept=".xlsx,.xls,.xlsm,.csv,.tsv" multiple hidden />
             </div>
           </section>
 
-          <section class="data-toolbar" id="data">
-            <div class="source-summary"><span class="file-icon">▦</span><div><strong id="source-name">Q3 Retail Sales.xlsx</strong><span id="source-meta">Sheet1 · 240 rows</span></div><span class="source-status">CONNECTED</span></div>
+          <section class="empty-state" id="empty-state" aria-labelledby="empty-state-title">
+            <div class="empty-state-orbit" aria-hidden="true"><span>▤</span><i></i><i></i><i></i></div>
+            <p class="empty-state-kicker">START WITH YOUR DATA</p>
+            <h2 id="empty-state-title">One workbook. Every sheet. A clearer picture.</h2>
+            <p class="empty-state-copy">Atlas scans all worksheets, finds useful tables, and builds interactive views from the data it can understand.</p>
+            <button class="button button-primary empty-state-button" id="empty-upload-button"><span class="button-plus">+</span> Upload a workbook</button>
+            <div class="empty-state-footnote"><span>✓</span> Files are analyzed in this browser and aren’t saved to an account.</div>
+          </section>
+
+          <section class="data-toolbar" id="data" hidden>
+            <div class="source-summary"><span class="file-icon">▦</span><div><strong id="source-name">No workbook selected</strong><span id="source-meta">Upload a file to start analyzing</span></div><span class="source-status">LOCAL</span></div>
             <div class="toolbar-divider"></div>
             <div class="filter-controls">
               <span class="filter-label">Filter by</span>
@@ -88,7 +96,7 @@
 
           <nav class="sheet-nav" id="sheet-nav" aria-label="Analyzed sheets" hidden></nav>
 
-          <section class="ask-card" id="ask-card" aria-label="Customize with Atlas">
+          <section class="ask-card" id="ask-card" aria-label="Customize with Atlas" hidden>
             <div class="ask-sparkle">✦</div>
             <div class="ask-content">
               <div class="ask-heading"><strong>Make it yours</strong><span>Describe a change and Atlas will update your dashboard</span></div>
@@ -115,9 +123,9 @@
             <div class="overview-cards" id="overview-cards"></div>
           </section>
 
-          <section class="kpi-grid" id="kpi-grid" aria-label="Key metrics"></section>
+          <section class="kpi-grid" id="kpi-grid" aria-label="Key metrics" hidden></section>
 
-          <section class="dashboard-grid" id="visualizations">
+          <section class="dashboard-grid" id="visualizations" hidden>
             <article class="panel primary-panel">
               <div class="panel-header">
                 <div><div class="panel-overline">TREND</div><h2 id="main-chart-heading">Revenue over time</h2><p id="main-chart-subtitle">Track your performance across the period</p></div>
@@ -158,7 +166,7 @@
               <div class="table-footer"><span id="row-count">Showing 5 of 5</span><span class="table-page">1 <span>of</span> 1</span></div>
             </article>
           </section>
-          <section class="extra-chart-grid" id="extra-charts" aria-label="Custom charts"></section>
+          <section class="extra-chart-grid" id="extra-charts" aria-label="Custom charts" hidden></section>
           <footer class="page-footer"><span>Made for curious minds</span><span>Workbook rows stay in your browser. AI receives your prompt, field names, and data-shape summaries.</span></footer>
         </div>
       </main>

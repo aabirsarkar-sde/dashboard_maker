@@ -138,40 +138,6 @@
     return text || `Field ${index + 1}`;
   }
 
-  function seededRandom(seed) {
-    let value = seed >>> 0;
-    return () => { value = (value * 1664525 + 1013904223) >>> 0; return value / 4294967296; };
-  }
-  function makeDemoData() {
-    const random = seededRandom(72391);
-    const products = [
-      ['Linen shirt', 'Apparel', 58], ['Everyday tote', 'Accessories', 32], ['Ceramic mug', 'Home', 24],
-      ['Desk lamp', 'Home', 86], ['Trail sneakers', 'Footwear', 112], ['Soft knit', 'Apparel', 74],
-      ['Leather wallet', 'Accessories', 68], ['Canvas runner', 'Footwear', 95],
-    ];
-    const regions = ['West', 'Northeast', 'South', 'Midwest'];
-    const channels = ['Online', 'Retail', 'Partner'];
-    const seasonal = [0.76, 0.82, 0.91, 0.96, 1.02, 1.09, 1.14, 1.11, 1.04, 1.16, 1.34, 1.47];
-    const rows = [];
-    for (let month = 0; month < 12; month += 1) {
-      for (let sale = 0; sale < 20; sale += 1) {
-        const product = products[Math.floor(random() * products.length)];
-        const units = 1 + Math.floor(random() * 4);
-        const revenue = Math.round(product[2] * units * seasonal[month] * (0.83 + random() * 0.36) * 100) / 100;
-        const margin = 0.19 + random() * 0.13;
-        const day = 1 + Math.floor(random() * 27);
-        const date = new Date(2025, month, day);
-        rows.push({
-          Date: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`,
-          Product: product[0], Category: product[1], Region: regions[Math.floor(random() * regions.length)],
-          Revenue: revenue, Orders: 1, Profit: Math.round(revenue * margin * 100) / 100,
-          Channel: channels[Math.floor(random() * channels.length)],
-        });
-      }
-    }
-    return rows;
-  }
-
   function chooseMetric(columns, rows) {
     const numeric = columns.filter((column) => {
       const values = rows.map((row) => row[column]).filter((value) => !isEmptyCell(value));
@@ -460,6 +426,8 @@
     const dataset = state.datasets[index];
     if (!dataset) return;
     state.activeDatasetIndex = index;
+    $('empty-state').hidden = true;
+    $('data').hidden = false;
     $('data').classList.remove('overview-mode');
     state.allRows = dataset.rows;
     state.rows = [...dataset.rows];
@@ -482,6 +450,12 @@
     state.dashboardTitle = dataset.title;
     $('dashboard-title').textContent = dataset.title;
     $('sidebar-dashboard-name').textContent = dataset.title;
+    $('sidebar-active-dashboard').hidden = false;
+    $('sidebar-empty-note').hidden = true;
+    $('nav-count').textContent = state.datasets.length.toLocaleString();
+    $('add-chart').hidden = false;
+    $('share-button').hidden = false;
+    $('export-button').hidden = false;
     $('dashboard-subtitle').textContent = `${dataset.sheetName} · ${dataset.rows.length.toLocaleString()} rows analyzed${dataset.periodColumn ? ' · period columns reshaped automatically' : ''}.`;
     const exampleMetric = dataset.metrics[0] || '';
     const exampleDimension = dataset.categoryDimension || dataset.dimensions[0] || '';
@@ -522,6 +496,8 @@
   }
 
   function renderWorkbookOverview() {
+    $('empty-state').hidden = true;
+    $('data').hidden = false;
     $('data').classList.add('overview-mode');
     const totalRows = state.datasets.reduce((sum, dataset) => sum + dataset.rows.length, 0);
     const measures = unique(state.datasets.flatMap((dataset) => dataset.metrics));
@@ -532,6 +508,13 @@
     $('sidebar-dashboard-name').textContent = $('dashboard-title').textContent;
     $('dashboard-subtitle').textContent = 'Every worksheet was scanned. Open an analyzed table to explore its dashboard.';
     $('source-name').textContent = state.workbookName || 'Spreadsheet';
+    $('nav-count').textContent = state.datasets.length.toLocaleString();
+    $('sidebar-active-dashboard').hidden = state.datasets.length === 0;
+    $('sidebar-empty-note').hidden = state.datasets.length > 0;
+    if (!state.datasets.length) $('sidebar-empty-note').textContent = 'No clear tables were found in this workbook.';
+    $('add-chart').hidden = true;
+    $('share-button').hidden = true;
+    $('export-button').hidden = true;
     $('source-meta').textContent = `${state.workbookCount > 1 ? `${state.workbookCount} workbooks · ` : ''}${state.sheetReports.length} worksheets scanned · ${state.datasets.length} tables found`;
     $('overview-summary').textContent = `Scanned ${state.sheetReports.length} worksheets${state.workbookCount > 1 ? ` across ${state.workbookCount} workbooks` : ''} and found ${state.datasets.length} structured table${state.datasets.length === 1 ? '' : 's'} across ${structuredSheets} worksheet${structuredSheets === 1 ? '' : 's'}.${noTables ? ` ${noTables} sheet${noTables === 1 ? '' : 's'} had no clear data table.` : ''}`;
     const stats = [
@@ -596,19 +579,6 @@
     $('upload-modal').hidden = true;
     const structuredSheets = new Set(state.datasets.map((dataset) => dataset.sheetName)).size;
     showToast(`Scanned ${state.sheetReports.length} worksheets${state.workbookCount > 1 ? ` from ${state.workbookCount} workbooks` : ''} and built ${state.datasets.length} sheet view${state.datasets.length === 1 ? '' : 's'} across ${structuredSheets} worksheets.`);
-  }
-
-  function loadDataset(rows, fileName, sheetName = '') {
-    const columns = Object.keys(rows[0] || {});
-    const table = { rows, headers: columns, score: 100, startRow: 0, dataEnd: rows.length - 1, periodColumn: '', tableLabel: fileName === 'Q3 Retail Sales.xlsx' ? 'Retail performance' : '' };
-    state.datasets = [datasetProfile(table, sheetName || 'Sheet1', 0, fileName, fileName === 'Q3 Retail Sales.xlsx' ? '$' : '')];
-    state.sheetReports = [{ sheetName: sheetName || 'Sheet1', tableCount: 1, cellCount: rows.length * columns.length, firstDatasetIndex: 0 }];
-    state.workbookName = fileName;
-    state.workbookCount = 1;
-    state.activeDatasetIndex = 0;
-    activateDataset(0);
-    $('upload-modal').hidden = true;
-    showToast(`Dashboard built from ${rows.length.toLocaleString()} rows.`);
   }
 
   function stripExtension(filename) { return String(filename || '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); }
@@ -1210,6 +1180,7 @@
   function bindEvents() {
     $('upload-button').addEventListener('click', () => { $('upload-modal').hidden = false; $('upload-error').hidden = true; });
     $('sidebar-ask').addEventListener('click', () => {
+      if (!state.datasets.length) { $('upload-modal').hidden = false; return; }
       if (state.activeDatasetIndex < 0 && state.datasets.length) {
         const bestIndex = state.datasets.reduce((best, dataset, index, all) => dataset.rankScore > all[best].rankScore ? index : best, 0);
         activateDataset(bestIndex);
@@ -1217,6 +1188,7 @@
       $('prompt-input').focus(); $('prompt-input').scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
     $('new-dashboard').addEventListener('click', () => { $('upload-modal').hidden = false; });
+    $('empty-upload-button').addEventListener('click', () => { $('upload-modal').hidden = false; $('upload-error').hidden = true; });
     $('close-upload').addEventListener('click', () => { $('upload-modal').hidden = true; });
     $('upload-modal').addEventListener('click', (event) => { if (event.target === $('upload-modal')) $('upload-modal').hidden = true; });
     $('browse-files').addEventListener('click', () => $('file-input').click());
@@ -1277,8 +1249,6 @@
   const savedTheme = (() => { try { return localStorage.getItem('atlas-theme'); } catch { return ''; } })();
   if (savedTheme === 'dark') document.body.classList.add('dark');
   syncThemeControl();
-  try { loadDataset(makeDemoData(), 'Q3 Retail Sales.xlsx', 'Sheet1'); }
-  catch (error) { console.error(error); showToast('Could not load the sample dashboard.'); }
 
   function syncThemeControl() {
     const dark = document.body.classList.contains('dark');
@@ -1287,6 +1257,6 @@
     $('theme-toggle').title = dark ? 'Switch to light mode' : 'Switch to dark mode';
     $('theme-toggle-label').textContent = dark ? 'Light mode' : 'Dark mode';
     $('theme-toggle-icon').textContent = dark ? '☀' : '☾';
-    document.querySelector('meta[name="theme-color"]').content = dark ? '#111a2c' : '#f3f6fb';
+    document.querySelector('meta[name="theme-color"]').content = dark ? '#000000' : '#f3f6fb';
   }
 })();

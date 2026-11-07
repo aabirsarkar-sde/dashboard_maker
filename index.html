@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f8fc" />
+    <title>Atlas — your data, in focus</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script defer src="app.js?v=20261107-4"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#" aria-label="Atlas home">
+          <span class="brand-mark"><i></i><i></i><i></i><i></i></span>
+          <span>atlas<span class="brand-dot">.</span></span>
+        </a>
+
+        <div class="workspace-switcher">
+          <div class="workspace-avatar">W</div>
+          <div class="workspace-name"><strong>Workspace</strong><span>Personal space</span></div>
+          <span class="chevron">⌄</span>
+        </div>
+
+        <nav class="side-nav" aria-label="Main navigation">
+          <p class="nav-label">WORKSPACE</p>
+          <a class="nav-item" href="#overview"><span class="nav-icon">◫</span> Overview</a>
+          <a class="nav-item active" href="#dashboard"><span class="nav-icon">▦</span> Dashboards <span class="nav-count">1</span></a>
+          <a class="nav-item" href="#data"><span class="nav-icon">▤</span> Data sources</a>
+          <p class="nav-label nav-label-spaced">YOUR DASHBOARDS <button class="mini-plus" id="new-dashboard" aria-label="New dashboard">+</button></p>
+          <a class="nav-item sub-item active-sub" href="#dashboard"><span class="sub-dot"></span><span id="sidebar-dashboard-name">Retail performance</span></a>
+          <a class="nav-item sub-item muted" href="#dashboard"><span class="sub-dot"></span> Monthly snapshot</a>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <div class="upgrade-card">
+            <div class="upgrade-icon">✦</div>
+            <strong>Your data has a story.</strong>
+            <p>Ask Atlas to help you find it.</p>
+            <button id="sidebar-ask">Try AI insights <span>→</span></button>
+          </div>
+          <a class="nav-item bottom-link" href="#settings"><span class="nav-icon">⚙</span> Settings</a>
+          <div class="profile-row"><div class="profile-avatar">A</div><div><strong>Aabir Sarkar</strong><span>Free plan</span></div><span class="more">···</span></div>
+        </div>
+      </aside>
+
+      <main class="main-content" id="dashboard">
+        <header class="topbar">
+          <div class="breadcrumb"><span>Workspace</span><span class="crumb-divider">/</span><strong>Dashboards</strong></div>
+          <div class="topbar-actions">
+            <span class="saved-state"><span class="saved-dot"></span> Workbook stays in browser</span>
+            <button class="icon-button" id="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
+            <button class="avatar-button" title="Account">A</button>
+          </div>
+        </header>
+
+        <div class="page-wrap">
+          <section class="page-heading">
+            <div class="heading-copy">
+              <div class="eyebrow"><span class="eyebrow-dot"></span> YOUR DASHBOARD</div>
+              <h1 id="dashboard-title">Retail performance</h1>
+              <p id="dashboard-subtitle">A clear view of what’s driving your business.</p>
+            </div>
+            <div class="heading-actions">
+              <button class="button button-quiet" id="add-chart"><span>＋</span> Add chart</button>
+              <button class="button button-quiet" id="share-button"><span>↗</span> Share</button>
+              <button class="button button-quiet" id="export-button"><span>⇩</span> Export data</button>
+              <button class="button button-primary" id="upload-button"><span class="button-plus">+</span> Upload data</button>
+              <input type="file" id="file-input" accept=".xlsx,.xls,.xlsm,.csv,.tsv" multiple hidden />
+            </div>
+          </section>
+
+          <section class="data-toolbar" id="data">
+            <div class="source-summary"><span class="file-icon">▦</span><div><strong id="source-name">Q3 Retail Sales.xlsx</strong><span id="source-meta">Sheet1 · 240 rows</span></div><span class="source-status">CONNECTED</span></div>
+            <div class="toolbar-divider"></div>
+            <div class="filter-controls">
+              <span class="filter-label">Filter by</span>
+              <select id="filter-column" aria-label="Choose a column to filter"><option value="">Select a field</option></select>
+              <select id="filter-value" aria-label="Choose a filter value" disabled><option value="">All values</option></select>
+              <button class="clear-filter" id="clear-filter" disabled>Clear</button>
+            </div>
+            <button class="toolbar-menu" id="data-menu" aria-label="More data options">···</button>
+          </section>
+
+          <nav class="sheet-nav" id="sheet-nav" aria-label="Analyzed sheets" hidden></nav>
+
+          <section class="ask-card" id="ask-card" aria-label="Customize with Atlas">
+            <div class="ask-sparkle">✦</div>
+            <div class="ask-content">
+              <div class="ask-heading"><strong>Make it yours</strong><span>Describe a change and Atlas will update your dashboard</span></div>
+              <form id="prompt-form" class="prompt-form">
+                <input id="prompt-input" type="text" autocomplete="off" placeholder="Try “show profit by region” or “filter to the West”" aria-label="Tell Atlas how to customize your dashboard" />
+                <button type="submit" aria-label="Send instruction">↑</button>
+              </form>
+            </div>
+            <div class="suggestion-row" id="suggestions">
+              <button class="suggestion-chip" data-prompt="What stands out in this data?">✧ What stands out?</button>
+              <button class="suggestion-chip" data-prompt="Show revenue by category">↗ Revenue by category</button>
+              <button class="suggestion-chip" data-prompt="Switch the main chart to a bar chart">▥ Try a bar chart</button>
+            </div>
+            <div id="assistant-response" class="assistant-response" aria-live="polite" hidden></div>
+          </section>
+
+          <section class="workbook-overview" id="workbook-overview" hidden aria-label="Workbook overview">
+            <div class="overview-heading">
+              <div><div class="panel-overline">WORKBOOK OVERVIEW</div><h2 id="overview-title">All sheets, scanned</h2><p id="overview-summary"></p></div>
+              <div class="overview-badge"><span class="saved-dot"></span> Analysis ready</div>
+            </div>
+            <div class="overview-stats" id="overview-stats"></div>
+            <div class="overview-section-heading"><div><h2>Sheets and tables</h2><p>Open any result to explore its charts, filters, and rows.</p></div><span id="overview-count"></span></div>
+            <div class="overview-cards" id="overview-cards"></div>
+          </section>
+
+          <section class="kpi-grid" id="kpi-grid" aria-label="Key metrics"></section>
+
+          <section class="dashboard-grid" id="visualizations">
+            <article class="panel primary-panel">
+              <div class="panel-header">
+                <div><div class="panel-overline">TREND</div><h2 id="main-chart-heading">Revenue over time</h2><p id="main-chart-subtitle">Track your performance across the period</p></div>
+                <div class="chart-controls">
+                  <label><span class="sr-only">Metric</span><select id="main-metric" aria-label="Choose chart metric"></select></label>
+                  <label><span class="sr-only">Group by</span><select id="main-dimension" aria-label="Group chart by"></select></label>
+                  <label><span class="sr-only">Chart type</span><select id="main-chart-type" aria-label="Choose chart type"><option value="line">Line</option><option value="bar">Bar</option><option value="area">Area</option></select></label>
+                  <button class="icon-button panel-menu" data-menu="primary" aria-label="Chart options">···</button>
+                </div>
+              </div>
+              <div class="chart-summary"><strong id="chart-total">$0</strong><span id="chart-delta" class="trend-pill">—</span><span class="summary-caption">in selected period</span></div>
+              <div class="chart-area" id="main-chart" role="img" aria-label="Revenue over time chart"></div>
+              <div class="chart-footer"><span class="legend-line"></span><span id="main-chart-legend">Revenue</span><span class="period-note" id="period-note">Last 12 months</span></div>
+            </article>
+
+            <article class="panel insight-panel" id="insights-panel">
+              <div class="panel-header insight-header"><div><div class="panel-overline">AT A GLANCE</div><h2>What’s moving</h2></div><span class="sparkle-badge">✦</span></div>
+              <p class="insight-intro">A few things worth a closer look.</p>
+              <div class="insight-list" id="insight-list"></div>
+              <button class="text-link" id="refresh-insights">Refresh insights <span>↻</span></button>
+            </article>
+
+            <article class="panel secondary-panel">
+              <div class="panel-header"><div><div class="panel-overline">BREAKDOWN</div><h2 id="category-chart-heading">Revenue by category</h2></div><button class="icon-button panel-menu" data-menu="category" aria-label="Chart options">···</button></div>
+              <div class="mini-chart-area" id="category-chart" role="img" aria-label="Revenue by category chart"></div>
+              <div class="panel-footnote" id="category-footnote">By product category</div>
+            </article>
+
+            <article class="panel secondary-panel">
+              <div class="panel-header"><div><div class="panel-overline">MIX</div><h2 id="region-chart-heading">Revenue by region</h2></div><button class="icon-button panel-menu" data-menu="region" aria-label="Chart options">···</button></div>
+              <div class="donut-layout"><div class="donut-chart-area" id="region-chart" role="img" aria-label="Revenue by region chart"></div><div class="donut-legend" id="region-legend"></div></div>
+              <div class="panel-footnote">Share of total revenue</div>
+            </article>
+
+            <article class="panel table-panel">
+              <div class="panel-header"><div><div class="panel-overline">DETAIL</div><h2>Top performers</h2><p class="table-subtitle">Ranked by <span id="table-metric-label">revenue</span></p></div><button class="button button-small" id="table-download">Download <span>⇩</span></button></div>
+              <div class="table-wrap"><table><thead id="table-head"></thead><tbody id="table-body"></tbody></table></div>
+              <div class="table-footer"><span id="row-count">Showing 5 of 5</span><span class="table-page">1 <span>of</span> 1</span></div>
+            </article>
+          </section>
+          <section class="extra-chart-grid" id="extra-charts" aria-label="Custom charts"></section>
+          <footer class="page-footer"><span>Made for curious minds</span><span>Workbook rows stay in your browser. AI receives your prompt, field names, and data-shape summaries.</span></footer>
+        </div>
+      </main>
+    </div>
+
+    <div class="modal-backdrop" id="upload-modal" hidden>
+      <section class="upload-modal" role="dialog" aria-modal="true" aria-labelledby="upload-title">
+        <button class="modal-close" id="close-upload" aria-label="Close upload dialog">×</button>
+        <div class="modal-icon">↑</div>
+        <p class="modal-kicker">BRING YOUR DATA</p>
+        <h2 id="upload-title">Let’s make something<br />of your spreadsheet.</h2>
+        <p class="modal-description">Drop in one or more Excel or CSV files. Atlas scans every worksheet, finds useful tables, and builds dashboards automatically.</p>
+        <div class="drop-zone" id="drop-zone" tabindex="0">
+          <div class="drop-icon">▤</div><strong>Drop your spreadsheet here</strong><span>or <button id="browse-files" type="button">browse files</button></span>
+          <small>Excel .xlsx, .xls, .xlsm, CSV or TSV · Select multiple files · Up to 20 MB each</small>
+        </div>
+        <div class="scan-status" id="scan-status" hidden aria-live="polite"><span class="scan-spinner"></span><span id="scan-status-text">Scanning every worksheet…</span></div>
+        <div class="upload-error" id="upload-error" hidden></div>
+        <div class="privacy-note"><span>⌑</span> Workbook rows stay in this browser. When you use AI, Atlas sends your instruction, field names, and data-shape summaries to Gemini.</div>
+      </section>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

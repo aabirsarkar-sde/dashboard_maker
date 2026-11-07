@@ -12,7 +12,7 @@
   const $ = (id) => document.getElementById(id);
   const {
     toNumber, unique, cleanCell, isEmptyCell, sumColumn, aggregate,
-    extractTables, datasetProfile, stripExtension, parseDelimited, detectCurrency,
+    extractTables, datasetProfile, stripExtension, parseDelimited, detectCurrency, normalizeSheetDates,
   } = globalThis.AtlasParser;
 
   function escapeHTML(value) {
@@ -90,7 +90,7 @@
     $('add-chart').hidden = false;
     $('share-button').hidden = false;
     $('export-button').hidden = false;
-    $('dashboard-subtitle').textContent = `${dataset.sheetName} · ${dataset.rows.length.toLocaleString()} rows analyzed${dataset.periodColumn ? ' · period columns reshaped automatically' : ''}.`;
+    $('dashboard-subtitle').textContent = `${dataset.sheetName} · ${dataset.rows.length.toLocaleString()} rows analyzed${dataset.reshapedPeriods ? ' · period columns reshaped automatically' : ''}${dataset.excludedTotalRows ? ` · ${dataset.excludedTotalRows} total row${dataset.excludedTotalRows === 1 ? '' : 's'} excluded` : ''}.`;
     const exampleMetric = dataset.metrics[0] || '';
     const exampleDimension = dataset.categoryDimension || dataset.dimensions[0] || '';
     const fieldSuggestion = $('suggestions').querySelector('[data-prompt*=" by "]');
@@ -499,7 +499,7 @@
             sheetName: files.length > 1 ? `${fileLabels[fileIndex]} · ${sheetName}` : sheetName,
             sourceFileName: file.name,
             sourceFileIndex: fileIndex,
-            matrix: XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '', raw: true, blankrows: true }),
+            matrix: normalizeSheetDates(XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '', raw: true, blankrows: true })),
           }));
           const fileCurrencySymbol = detectCurrency(workbook, matrices, XLSX.utils);
           matrices.forEach((sheet) => { sheet.sheetCurrencySymbol = fileCurrencySymbol; });
@@ -705,15 +705,15 @@
     const namedMetric = findNamedField(lower, state.metrics);
     const namedDimension = findNamedField(lower, [...(state.dateColumn ? [state.dateColumn] : []), ...state.dimensions]);
     if (namedMetric && namedDimension && (/\bby\b|group|breakdown|against/.test(lower))) {
-      $('main-metric').value = namedMetric;
-      $('main-dimension').value = namedDimension;
+      state.metric = namedMetric;
+      state.dimension = namedDimension;
       state.categoryDimension = namedDimension;
       renderDashboard();
       setResponse(`Now showing ${namedMetric} by ${namedDimension}. You can adjust the metric, grouping, and chart style above the chart.`);
       return;
     }
     if (namedMetric && /metric|show|plot|chart|compare/.test(lower)) {
-      $('main-metric').value = namedMetric; renderDashboard(); setResponse(`The dashboard is now focused on ${namedMetric}.`); return;
+      state.metric = namedMetric; renderDashboard(); setResponse(`The dashboard is now focused on ${namedMetric}.`); return;
     }
     if (/add (a )?(new )?chart|another chart|new visualization/.test(lower)) { addChart(); setResponse('Added a chart. Use its selectors to choose the metric, grouping, and style.'); return; }
     if (/remove (the )?(last )?chart|delete chart/.test(lower)) {

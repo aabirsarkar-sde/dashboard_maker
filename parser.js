@@ -24,6 +24,14 @@
     const period = parsePeriodHeader(text);
     if (period?.date) return period.date;
     if (/^\d{1,5}$/.test(text)) return null;
+    const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s]|$)/);
+    if (iso) {
+      // new Date('2025-01-01') is midnight UTC, which is the previous month west of Greenwich.
+      const [year, month, day] = iso.slice(1).map(Number);
+      const local = new Date(year, month - 1, day);
+      const valid = local.getMonth() === month - 1 && local.getDate() === day && year >= 1900 && year <= 2200;
+      return valid ? local : null;
+    }
     const date = new Date(text);
     if (Number.isNaN(date.getTime())) return null;
     if (date.getFullYear() < 1900 || date.getFullYear() > 2200) return null;
@@ -37,7 +45,16 @@
     if (typeof value === 'string') return value.replace(/\s+/g, ' ').trim();
     return value;
   }
-  function cellText(value) { return value instanceof Date ? value.toISOString().slice(0, 10) : String(value ?? '').replace(/\s+/g, ' ').trim(); }
+  function localDay(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+  function cellText(value) { return value instanceof Date ? localDay(value) : String(value ?? '').replace(/\s+/g, ' ').trim(); }
+  // SheetJS 0.18 applies the zone's historical 1899 offset, so in Asia/Kolkata 1 Jan arrives
+  // as 31 Dec 23:59:50. Rounding to the minute removes the drift and keeps real times.
+  function normalizeSheetDates(matrix) {
+    const minute = 60000;
+    return matrix.map((row) => row.map((value) => (value instanceof Date ? new Date(Math.round(value.getTime() / minute) * minute) : value)));
+  }
   function isEmptyCell(value) { return value == null || String(value).trim() === ''; }
   function periodYear(value) {
     const text = cellText(value).replace(/^FY\s*/i, '');
@@ -91,12 +108,30 @@
     return text || `Field ${index + 1}`;
   }
 
+  function columnValues(column, rows) { return rows.map((row) => row[column]).filter((value) => !isEmptyCell(value)); }
+  function holdsYears(column, rows) {
+    const values = columnValues(column, rows);
+    return values.length > 0 && values.every((value) => {
+      const number = toNumber(value);
+      return Number.isInteger(number) && number >= 1900 && number <= 2200;
+    });
+  }
+  // "Year" is never a measure, but "This Year" often holds amounts, so a suffix match needs year-like values.
+  function isCalendarField(column, rows) {
+    if (/^(?:(?:fiscal[\s_-]*)?(?:year|yr|quarter|qtr|month|week)|fy)$/i.test(column)) return true;
+    return /(?:^|[\s_-])(?:year|yr|fy)$/i.test(column) && holdsYears(column, rows);
+  }
+  function isYearField(column, rows) {
+    return /(?:^|[\s_-])(?:year|yr|fy)$/i.test(column) && holdsYears(column, rows) && unique(rows.map((row) => row[column])).length >= 2;
+  }
+  function isCodeField(column) { return /^(rank|category|type)$/i.test(column); }
+
   function chooseMetric(columns, rows) {
     const numeric = columns.filter((column) => {
       const values = rows.map((row) => row[column]).filter((value) => !isEmptyCell(value));
       return values.length > 0 && values.filter((value) => Number.isFinite(toNumber(value))).length / values.length >= 0.62;
     });
-    const usable = numeric.filter((column) => !/(^id$|_id$|\bid\b|zip|postal|phone|latitude|longitude|^sr\s*no|serial|invoice\s*(no|number)|voucher\s*(no|number)|payment\s*number)/i.test(column));
+    const usable = numeric.filter((column) => !isCalendarField(column, rows) && !isCodeField(column) && !/(^id$|_id$|\bid\b|zip|postal|phone|latitude|longitude|^sr\s*no|serial|invoice\s*(no|number)|voucher\s*(no|number)|payment\s*number)/i.test(column));
     const priority = (column) => {
       const name = column.toLowerCase();
       if (/revenue|sales|gross|net|amount|profit|income|value|total/.test(name)) return 0;
@@ -131,7 +166,8 @@
     return 'Value';
   }
   function isTotalHeader(value) { return /^(grand\s+total|total\s+result|overall\s+total|total)$/i.test(cellText(value)); }
-  function isTotalRow(value) { return /^(grand\s+total|total\s+result|overall\s+total)$/i.test(cellText(value)); }
+  function isTotalRow(value) { return /^(?:(?:.*\s)?(?:sub[\s-]?)?totals?|total\s+result):?$/i.test(cellText(value)); }
+  function firstFilled(values) { return values.find((value) => !isEmptyCell(value)); }
   function rowValue(matrix, rowIndex, colIndex) { return matrix[rowIndex]?.[colIndex] ?? ''; }
   function parentYearForColumn(matrix, headerRow, column) {
     for (let rowIndex = headerRow - 1; rowIndex >= Math.max(0, headerRow - 4); rowIndex -= 1) {
@@ -274,10 +310,10 @@
     const otherColumns = candidate.columns.map((column, index) => ({ column, name: headers[index], index }))
       .filter((item) => !periods.some((period) => period.column === item.column) && !isTotalHeader(item.name));
     const output = [];
+    let excludedTotalRows = 0;
     for (let r = candidate.startRow; r <= candidate.dataEnd; r += 1) {
       const source = matrix[r] || [];
-      const firstLabel = cellText(rowValue(matrix, r, otherColumns[0]?.column));
-      if (isTotalRow(firstLabel)) continue;
+      if (isTotalRow(firstFilled(otherColumns.map(({ column }) => source[column])))) { excludedTotalRows += 1; continue; }
       const dimensions = {};
       otherColumns.forEach(({ column, name }) => { dimensions[name] = cleanCell(source[column]); });
       const perGroup = new Map();
@@ -293,20 +329,20 @@
       });
     }
     if (!output.length) return null;
-    return { rows: output, headers: [...otherColumns.map((item) => item.name), 'Period', ...groups], startRow: candidate.startRow, dataEnd: candidate.dataEnd, score: candidate.score + output.length / 100, support: candidate.support, periodColumn: 'Period', measureGroups: groups };
+    return { rows: output, headers: [...otherColumns.map((item) => item.name), 'Period', ...groups], startRow: candidate.startRow, dataEnd: candidate.dataEnd, score: candidate.score + output.length / 100, support: candidate.support, periodColumn: 'Period', measureGroups: groups, excludedTotalRows };
   }
   function regularCandidateRows(matrix, candidate) {
     const output = [];
+    let excludedTotalRows = 0;
     for (let r = candidate.startRow; r <= candidate.dataEnd; r += 1) {
       const source = matrix[r] || [];
       if (!candidate.columns.some((column) => !isEmptyCell(source[column]))) continue;
       const row = Object.fromEntries(candidate.columns.map((column, index) => [candidate.headers[index], cleanCell(source[column])]));
-      const first = cellText(row[candidate.headers[0]]);
-      if (isTotalRow(first)) continue;
+      if (isTotalRow(firstFilled(candidate.columns.map((column) => source[column])))) { excludedTotalRows += 1; continue; }
       const notEmpty = Object.values(row).filter((value) => !isEmptyCell(value)).length;
       if (notEmpty >= Math.min(2, candidate.columns.length)) output.push(row);
     }
-    return output;
+    return { rows: output, excludedTotalRows };
   }
   function extractTables(matrix, sheetName) {
     const candidates = [];
@@ -334,9 +370,9 @@
     selected.sort((a, b) => a.rowIndex - b.rowIndex || a.columns[0] - b.columns[0]);
     const tables = selected.map((candidate) => {
       const reshaped = unpivotCandidate(matrix, candidate, sheetName);
-      const rows = reshaped?.rows || regularCandidateRows(matrix, candidate);
+      const { rows, excludedTotalRows } = reshaped || regularCandidateRows(matrix, candidate);
       if (!rows.length) return null;
-      return { ...candidate, ...reshaped, rows, headers: reshaped?.headers || candidate.headers, periodColumn: reshaped?.periodColumn || '' };
+      return { ...candidate, ...reshaped, rows, excludedTotalRows, headers: reshaped?.headers || candidate.headers, periodColumn: reshaped?.periodColumn || '' };
     }).filter(Boolean);
     if (!tables.length) {
       const list = isLikelyOneColumnList(matrix, sheetName);
@@ -348,18 +384,19 @@
   function datasetProfile(table, sheetName, tableIndex, fileName, currencySymbol = '') {
     const rows = table.rows.filter((row) => row && Object.values(row).some((value) => !isEmptyCell(value)));
     const columns = [...new Set(table.headers || Object.keys(rows[0] || {}))].filter(Boolean);
-    const metrics = chooseMetric(columns, rows);
-    const periodColumn = table.periodColumn || '';
-    const dateCandidate = periodColumn || columns.find((column) => /date|time|month|period|day/i.test(column) && rows.filter((row) => parseDate(row[column])).length / Math.max(rows.length, 1) >= 0.48)
+    const metrics = chooseMetric(columns.filter((column) => column !== table.periodColumn), rows);
+    const yearColumn = columns.find((column) => isYearField(column, rows));
+    const dateCandidate = table.periodColumn || columns.find((column) => /date|time|month|period|day/i.test(column) && rows.filter((row) => parseDate(row[column])).length / Math.max(rows.length, 1) >= 0.48)
       || columns.find((column) => rows.filter((row) => parseDate(row[column])).length / Math.max(rows.length, 1) >= 0.78)
-      || '';
+      || yearColumn || '';
+    const periodColumn = table.periodColumn || (dateCandidate === yearColumn ? yearColumn : '');
     const dimensions = columns.filter((column) => {
       if (column === dateCandidate || metrics.includes(column) || /comments?|description|notes?|address|postal|phone|tariff|alias/i.test(column)) return false;
       const values = rows.map((row) => row[column]).filter((value) => !isEmptyCell(value));
       const cardinality = unique(values).length;
       if (cardinality < 2 || !values.length) return false;
       const numericRatio = values.filter((value) => Number.isFinite(toNumber(value))).length / values.length;
-      if (numericRatio > 0.8) return /^(year|fy|rank|category|type)$/i.test(column) && cardinality <= 40;
+      if (numericRatio > 0.8) return (isCalendarField(column, rows) || isCodeField(column)) && cardinality <= 60;
       if (cardinality > Math.max(1500, rows.length * 0.98) && /invoice|voucher|reference|serial|batch|id|code|number/i.test(column)) return false;
       return true;
     });
@@ -372,7 +409,7 @@
     const title = table.tableLabel || `${baseSheetTitle}${tableIndex > 0 ? ` · Table ${tableIndex + 1}` : ''}`;
     const hint = unique(table.measureGroups || []);
     const rowScore = Math.log10(rows.length + 1) * 6 + Math.min(metrics.length, 5) * 2 + Math.min(dimensions.length, 7) + (dateCandidate ? 3 : 0) + (hint.length ? 1 : 0);
-    return { rows, columns, metrics, dimensions, dateColumn: dateCandidate, periodColumn, categoryDimension, regionDimension, sheetName, tableIndex, title, fileName, currencySymbol, tableScore: table.score || 0, rankScore: rowScore };
+    return { rows, columns, metrics, dimensions, dateColumn: dateCandidate, periodColumn, reshapedPeriods: Boolean(table.periodColumn), excludedTotalRows: table.excludedTotalRows || 0, categoryDimension, regionDimension, sheetName, tableIndex, title, fileName, currencySymbol, tableScore: table.score || 0, rankScore: rowScore };
   }
 
   function stripExtension(filename) { return String(filename || '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); }
@@ -460,6 +497,6 @@
   return {
     sumColumn, aggregate,
     toNumber, parseDate, unique, cleanCell, cellText, isEmptyCell, parsePeriodHeader, isTotalRow,
-    chooseMetric, extractTables, datasetProfile, stripExtension, parseDelimited, detectCurrency,
+    chooseMetric, extractTables, datasetProfile, stripExtension, parseDelimited, detectCurrency, normalizeSheetDates,
   };
 });

@@ -89,3 +89,10 @@ test('SheetJS seconds drift is removed without touching real times', () => {
   assert.equal(kept.getTime(), timed.getTime());
   assert.equal(text, 'x');
 });
+
+test('wide tables with year headers keep Period out of the measures', () => {
+  const tables = extractTables(parseDelimited('Region,2023,2024,2025\nWest,10,20,30\nEast,40,50,60\n', ','), 'Sheet');
+  const dataset = datasetProfile(tables[0], 'Sheet', 0, 'wide.csv');
+  assert.equal(dataset.dateColumn, 'Period');
+  assert.ok(!dataset.metrics.includes('Period'));
+});

@@ -8,6 +8,10 @@ Deploy on Vercel or run locally with `vercel dev` to use the Gemini instruction 
 
 Excel workbook parsing loads SheetJS from jsDelivr; workbook rows stay in the browser. AI instructions send the prompt, field names, column types, row counts, and current chart settings to Gemini; raw worksheet rows and cell values are not sent.
 
+## Test it
+
+Run `node --test "test/*.test.js"` (Node 22, no dependencies). `parser.js` holds the spreadsheet parsing and table detection with no DOM access, and `app.js` holds the dashboard. Add a file to `test/fixtures` whenever a real spreadsheet is misread. Date tests depend on the time zone, so also run them with `TZ=Asia/Kolkata` and `TZ=America/New_York`.
+
 ## Use it
 
 - Upload one or more `.xlsx`, `.xls`, `.xlsm`, `.csv`, or `.tsv` files (up to 20 MB each). Atlas scans every worksheet automatically; it never asks you to choose one first.

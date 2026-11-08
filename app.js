@@ -51,6 +51,18 @@
     const span = max - min;
     return { min: min < 0 ? min - span * padding : 0, max: max > 0 ? max + span * padding : 0 };
   }
+  // Latest period against the one before it. The old pill compared the first half of the data
+  // with the second half, which reads like a period change but is not one.
+  function periodChange(metric) {
+    if (!state.dateColumn) return null;
+    const trend = aggregatedData(state.rows, state.dateColumn, metric);
+    if (trend.length < 2) return null;
+    const last = trend[trend.length - 1], previous = trend[trend.length - 2];
+    return { last, previous, pct: previous.value ? ((last.value - previous.value) / Math.abs(previous.value)) * 100 : null };
+  }
+  function changeText(change) { return change.pct == null ? 'new' : `${change.pct >= 0 ? '+' : ''}${change.pct.toFixed(1)}%`; }
+  // Charts are drawn at the container's real pixel width, so 9px text stays 9px on a phone.
+  function chartWidth(element, fallback, minimum) { return Math.max(minimum, Math.round(element?.clientWidth || fallback)); }
   function cleanTick(value, domain) { return Math.abs(value) < (domain.max - domain.min) * 1e-9 ? 0 : value; }
   function phrasePattern(phrase) {
     return new RegExp(`(?<![\\p{L}\\p{N}])${String(phrase).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u');
@@ -294,17 +306,14 @@
     $('main-chart').setAttribute('aria-label', `${heading} ${type} chart`);
     const total = sumMetric(state.rows, metric);
     $('chart-total').textContent = metricFormat(total, metric);
-    const half = Math.floor(data.length / 2);
-    const combine = (items) => (isAverage(metric) ? items.reduce((sum, item) => sum + item.value, 0) / Math.max(items.length, 1) : items.reduce((sum, item) => sum + item.value, 0));
-    const first = combine(data.slice(0, half || 1));
-    const second = combine(data.slice(half || 1));
-    const change = first ? ((second - first) / Math.abs(first)) * 100 : 0;
+    const change = dimension === state.dateColumn ? periodChange(metric) : null;
     const delta = $('chart-delta');
-    delta.textContent = dimension === state.dateColumn && data.length > 1 ? `${change >= 0 ? '+' : ''}${change.toFixed(1)}%` : `${grouped.length} groups`;
-    delta.classList.toggle('down', dimension === state.dateColumn && change < 0);
-    document.querySelector('.summary-caption').textContent = dimension === state.dateColumn ? 'in selected period' : 'in this view';
+    delta.textContent = change ? changeText(change) : `${grouped.length} groups`;
+    delta.title = change ? `${change.last.label} compared with ${change.previous.label}` : '';
+    delta.classList.toggle('down', Boolean(change && change.pct < 0));
+    document.querySelector('.summary-caption').textContent = change ? `${change.last.label} vs ${change.previous.label}` : 'in this view';
 
-    const width = 720, height = 200, left = 48, right = 8, top = 10, bottom = 29;
+    const width = chartWidth($('main-chart'), 720, 300), height = 200, left = 48, right = 8, top = 10, bottom = 29;
     const plotWidth = width - left - right, plotHeight = height - top - bottom;
     const domain = valueDomain(data.map((item) => item.value));
     const count = Math.max(data.length, 1);
@@ -318,7 +327,7 @@
       const yy = top + (index / 3) * plotHeight;
       return `<line class="grid-line" x1="${left}" y1="${yy}" x2="${width - right}" y2="${yy}" stroke="#eef0f5" stroke-width="1"/><text x="${left - 8}" y="${yy + 3}" text-anchor="end" fill="#a6aab8" font-size="8" font-family="DM Sans">${escapeXml(chartYAxis(v, metric))}</text>`;
     }).join('') + (domain.min < 0 ? `<line class="zero-line" x1="${left}" y1="${zeroY}" x2="${width - right}" y2="${zeroY}" stroke="#a6aab8" stroke-width="1"/>` : '');
-    const labelStep = Math.max(1, Math.ceil(data.length / 7));
+    const labelStep = Math.max(1, Math.ceil(data.length / Math.max(2, Math.floor(plotWidth / 64))));
     const labels = data.map((item, index) => index % labelStep === 0 || index === data.length - 1
       ? `<text x="${x(index)}" y="${height - 7}" text-anchor="middle" fill="#a6aab8" font-size="8" font-family="DM Sans">${escapeXml(shortLabel(item.label, 12))}</text>` : '').join('');
     let series = '';
@@ -334,9 +343,8 @@
     $('main-chart').innerHTML = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeXml(heading)}">${grid}${series}${labels}</svg>`;
   }
 
-  // compact draws for a narrow panel, so labels are not shrunk when the SVG scales down.
-  function renderBars(element, data, metric, limit = 5, compactLayout = false) {
-    const width = compactLayout ? 300 : 440, height = 180, left = compactLayout ? 74 : 112, right = compactLayout ? 38 : 45, top = 3, rowHeight = compactLayout ? 29 : 32;
+  function renderBars(element, data, metric, limit = 5) {
+    const width = chartWidth(element, 440, 240), compactLayout = width < 380, height = 180, left = compactLayout ? 74 : 112, right = compactLayout ? 38 : 45, top = 3, rowHeight = compactLayout ? 29 : 32;
     const shown = [...data].sort((a, b) => b.value - a.value).slice(0, limit);
     if (!shown.length) { element.innerHTML = '<div class="empty-chart">No values available</div>'; return; }
     const domain = valueDomain(shown.map((item) => item.value), 0);
@@ -354,7 +362,7 @@
   function renderMiniLine(element, data, metric) {
     const shown = data.slice(-14);
     if (!shown.length) { element.innerHTML = '<div class="empty-chart">No values available</div>'; return; }
-    const width = 440, height = 178, left = 35, right = 5, top = 10, bottom = 25;
+    const width = chartWidth(element, 440, 240), height = 178, left = 35, right = 5, top = 10, bottom = 25;
     const domain = valueDomain(shown.map((item) => item.value), 0.08);
     const plotWidth = width - left - right, plotHeight = height - top - bottom;
     const x = (index) => left + (shown.length === 1 ? plotWidth / 2 : index * plotWidth / (shown.length - 1));
@@ -376,7 +384,7 @@
       : `Share of total ${metricLabel(metric).toLowerCase()}`;
     if (!data.length) { element.innerHTML = '<div class="empty-chart">No values available</div>'; legend.innerHTML = ''; return; }
     if (asBars) {
-      renderBars(element, data, metric, 6, true);
+      renderBars(element, data, metric, 6);
       legend.innerHTML = '';
       return;
     }
@@ -410,13 +418,18 @@
     const average = orderTotal ? revenueTotal / orderTotal : 0;
     const margin = revenueTotal ? profitTotal / revenueTotal : 0;
     const showMargin = profitIsTotal && revenueIsTotal && profit !== revenue;
+    // A badge only appears when there is a real change to report: latest period vs the one before.
+    const badge = (metric) => {
+      const change = periodChange(metric);
+      return change ? { text: `${changeText(change)} vs ${change.previous.label}`, negative: change.pct < 0 } : null;
+    };
     const items = [
-      { label: revenue ? metricLabel(revenue) : 'Records', value: revenue ? metricFormat(revenueTotal, revenue) : compact(state.rows.length), meta: `${state.rows.length.toLocaleString()} rows in this view`, icon: '↗', change: 'Live' },
-      { label: ordersAreCounts ? orders : 'Rows analyzed', value: compact(orderTotal, 0), meta: ordersAreCounts ? `Total ${orders.toLowerCase()}` : 'Included in this view', icon: '▤', change: 'Live' },
-      { label: revenueIsTotal ? (ordersAreCounts ? `Average per ${orders.toLowerCase()}` : 'Average per row') : 'Columns found', value: revenueIsTotal ? metricFormat(average, revenue) : String(state.columns.length), meta: revenueIsTotal ? `${revenue} ÷ ${ordersAreCounts ? orders.toLowerCase() : 'rows'}` : 'Detected from your sheet', icon: '◌', change: 'Live' },
-      { label: showMargin ? 'Profit margin' : 'Categories', value: showMargin ? `${(margin * 100).toFixed(1)}%` : String(state.dimensions.length), meta: showMargin ? `${metricFormat(profitTotal, profit)} total profit` : 'Fields available to explore', icon: '⌁', change: showMargin ? (margin >= .2 ? 'Healthy' : 'Review') : 'Ready' },
+      { label: revenue ? metricLabel(revenue) : 'Records', value: revenue ? metricFormat(revenueTotal, revenue) : compact(state.rows.length), meta: `${state.rows.length.toLocaleString()} rows in this view`, icon: '↗', change: badge(revenue || '') },
+      { label: ordersAreCounts ? orders : 'Rows analyzed', value: compact(orderTotal, 0), meta: ordersAreCounts ? `Total ${orders.toLowerCase()}` : 'Included in this view', icon: '▤', change: ordersAreCounts ? badge(orders) : null },
+      { label: revenueIsTotal ? (ordersAreCounts ? `Average per ${orders.toLowerCase().replace(/s$/, '')}` : 'Average per row') : 'Columns found', value: revenueIsTotal ? metricFormat(average, revenue) : String(state.columns.length), meta: revenueIsTotal ? `${revenue} ÷ ${ordersAreCounts ? orders.toLowerCase() : 'rows'}` : 'Detected from your sheet', icon: '◌', change: null },
+      { label: showMargin ? 'Profit margin' : 'Categories', value: showMargin ? `${(margin * 100).toFixed(1)}%` : String(state.dimensions.length), meta: showMargin ? `${metricFormat(profitTotal, profit)} total profit` : 'Fields available to explore', icon: '⌁', change: null },
     ];
-    $('kpi-grid').innerHTML = items.map((item) => `<article class="kpi-card"><div class="kpi-label">${escapeHTML(item.label)}</div><span class="kpi-icon">${item.icon}</span><div class="kpi-value">${escapeHTML(item.value)}</div><div class="kpi-meta"><span class="kpi-change">${escapeHTML(item.change)}</span><span>${escapeHTML(item.meta)}</span></div></article>`).join('');
+    $('kpi-grid').innerHTML = items.map((item) => `<article class="kpi-card"><div class="kpi-label">${escapeHTML(item.label)}</div><span class="kpi-icon">${item.icon}</span><div class="kpi-value">${escapeHTML(item.value)}</div><div class="kpi-meta">${item.change ? `<span class="kpi-change${item.change.negative ? ' negative' : ''}">${escapeHTML(item.change.text)}</span>` : ''}<span>${escapeHTML(item.meta)}</span></div></article>`).join('');
   }
 
   function renderInsights() {
@@ -435,13 +448,9 @@
       const topRegion = aggregatedData(state.rows, region, metric, true)[0];
       if (topRegion) items.push({ icon: '◎', text: `<strong>${escapeHTML(topRegion.label)}</strong> is your strongest ${escapeHTML(region.toLowerCase())}${isAverage(metric) ? ', averaging' : ', contributing'} <strong>${escapeHTML(metricFormat(topRegion.value, metric))}</strong>.` });
     }
-    if (state.dateColumn) {
-      const trend = aggregatedData(state.rows, state.dateColumn, metric);
-      if (trend.length > 1) {
-        const first = trend[0].value, last = trend[trend.length - 1].value;
-        const delta = first ? ((last - first) / Math.abs(first)) * 100 : 0;
-        items.push({ icon: delta >= 0 ? '↗' : '⌁', text: `Latest period is <strong>${delta >= 0 ? 'up' : 'down'} ${Math.abs(delta).toFixed(1)}%</strong> compared with ${escapeHTML(trend[0].label)}.` });
-      }
+    const change = periodChange(metric);
+    if (change?.pct != null) {
+      items.push({ icon: change.pct >= 0 ? '↗' : '⌁', text: `${escapeHTML(change.last.label)} is <strong>${change.pct >= 0 ? 'up' : 'down'} ${Math.abs(change.pct).toFixed(1)}%</strong> on ${escapeHTML(change.previous.label)}.` });
     }
     if (!items.length) items.push({ icon: '✧', text: `Atlas found <strong>${state.rows.length.toLocaleString()} rows</strong> and ${state.columns.length} columns. Try grouping a metric by one of your fields.` });
     $('insight-list').innerHTML = items.slice(0, 3).map((item) => `<div class="insight-item"><span class="insight-icon">${item.icon}</span><div class="insight-text">${item.text}</div></div>`).join('');
@@ -509,6 +518,8 @@
     $('upload-error').textContent = message;
     $('upload-error').hidden = false;
   }
+  // Only US and Philippine English write month first; everyone else, India included, writes day first.
+  function readOptions() { return { dayFirst: !/^en-(us|ph)$/i.test(globalThis.navigator?.language || '') }; }
   async function processFiles(fileList) {
     const files = Array.from(fileList || []);
     if (!files.length) return;
@@ -541,7 +552,7 @@
             const text = await file.text();
             const clean = text.replace(/^\uFEFF/, '');
             const delimiter = extension === 'tsv' ? '\t' : detectDelimiter(clean);
-            const matrix = prepareMatrix(parseDelimited(clean, delimiter).map((row) => row.map(cleanCell)));
+            const matrix = prepareMatrix(parseDelimited(clean, delimiter).map((row) => row.map(cleanCell)), readOptions());
             sheetMatrices.push({
               sheetName: files.length > 1 ? `${fileLabels[fileIndex]} · Data` : stripExtension(file.name),
               sourceFileName: file.name,
@@ -559,7 +570,7 @@
             sheetName: files.length > 1 ? `${fileLabels[fileIndex]} · ${sheetName}` : sheetName,
             sourceFileName: file.name,
             sourceFileIndex: fileIndex,
-            matrix: prepareMatrix(XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '', raw: true, blankrows: true })),
+            matrix: prepareMatrix(XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '', raw: true, blankrows: true }), readOptions()),
           }));
           const fileCurrencySymbol = detectCurrency(workbook, matrices, XLSX.utils);
           matrices.forEach((sheet) => { sheet.sheetCurrencySymbol = fileCurrencySymbol; });
@@ -593,18 +604,29 @@
     const lower = query.toLowerCase();
     return candidates.sort((a, b) => String(b.value).length - String(a.value).length).find((candidate) => mentions(lower, candidate.value)) || null;
   }
-  function summarizeCurrentData() {
+  function summaryFacts() {
     const metric = $('main-metric').value || state.metric;
     const total = sumMetric(state.rows, metric);
     const dimension = state.categoryDimension || state.dimensions[0];
     const top = dimension ? aggregatedData(state.rows, dimension, metric, true)[0] : null;
-    const dateData = state.dateColumn ? aggregatedData(state.rows, state.dateColumn, metric) : [];
-    const trendText = dateData.length > 1 ? (() => {
-      const first = dateData[0].value, last = dateData[dateData.length - 1].value;
-      const change = first ? ((last - first) / Math.abs(first)) * 100 : 0;
-      return ` The latest period is ${change >= 0 ? 'up' : 'down'} ${Math.abs(change).toFixed(1)}% versus the first.`;
-    })() : '';
-    return `I looked across ${state.rows.length.toLocaleString()} rows. ${isAverage(metric) ? metricLabel(metric) : `Total ${metric || 'records'}`} is ${metricFormat(total, metric)}${top ? `, with ${top.label} leading ${dimension} at ${metricFormat(top.value, metric)}` : ''}.${trendText} The dashboard has been refreshed with those patterns.`;
+    const change = periodChange(metric);
+    const trendText = change?.pct != null ? ` ${change.last.label} is ${change.pct >= 0 ? 'up' : 'down'} ${Math.abs(change.pct).toFixed(1)}% on ${change.previous.label}.` : '';
+    return `${isAverage(metric) ? metricLabel(metric) : `Total ${metric || 'records'}`} is ${metricFormat(total, metric)}${top ? `, with ${top.label} leading ${dimension} at ${metricFormat(top.value, metric)}` : ''}.${trendText}`;
+  }
+  function summarizeCurrentData() { return `I looked across ${state.rows.length.toLocaleString()} rows. ${summaryFacts()}`; }
+  // Share sends a text summary of the current view (the native share sheet on phones,
+  // the clipboard elsewhere). Workbook rows never leave the browser unless the person pastes them.
+  async function shareSummary() {
+    const filter = Object.entries(state.filters).map(([column, value]) => `${column} = ${value}`).join(', ');
+    const text = `${state.dashboardTitle}${filter ? ` (filtered to ${filter})` : ''}\n${state.rows.length.toLocaleString()} rows. ${summaryFacts()}`;
+    const nav = globalThis.navigator;
+    try {
+      if (nav?.share) { await nav.share({ title: state.dashboardTitle, text }); return; }
+      await nav.clipboard.writeText(text);
+      showToast('Summary copied. Paste it anywhere to share.');
+    } catch (error) {
+      if (error?.name !== 'AbortError') showToast('This browser can’t share or copy here. Use Export data instead.');
+    }
   }
   function aiContext() {
     return {
@@ -857,7 +879,15 @@
     $('add-chart').addEventListener('click', addChart);
     $('export-button').addEventListener('click', () => downloadRows(state.rows, `${stripExtension(state.fileName) || 'atlas'}-data.csv`));
     $('table-download').addEventListener('click', () => downloadRows(state.rows, `${stripExtension(state.fileName) || 'atlas'}-data.csv`));
-    $('share-button').addEventListener('click', () => showToast('This dashboard is running privately in your browser. Export the data to share it.'));
+    $('share-button').addEventListener('click', shareSummary);
+    // Redraw at the new width; phones fire resize on scroll (address bar), so only width counts.
+    let lastWidth = globalThis.innerWidth, resizeTimer = null;
+    globalThis.addEventListener?.('resize', () => {
+      if (globalThis.innerWidth === lastWidth) return;
+      lastWidth = globalThis.innerWidth;
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => { if (state.activeDatasetIndex >= 0) renderDashboard(); }, 150);
+    });
     $('data-menu').addEventListener('click', () => { $('upload-modal').hidden = false; });
     $('extra-charts').addEventListener('change', (event) => {
       const target = event.target;

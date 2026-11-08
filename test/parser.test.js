@@ -165,3 +165,47 @@ test('CSV cells neutralise formulas but keep numbers and dates readable', () => 
   assert.equal(csvCell(new Date(2025, 0, 31)), '"2025-01-31"');
   assert.equal(csvCell(new Date(2025, 0, 31, 9, 5)), '"2025-01-31 09:05"');
 });
+
+const { normalizeTextDates, toNumber } = require('../parser.js');
+const column = (values, options) => normalizeTextDates(values.map((value) => [value]), options).map((row) => row[0]);
+
+test('Indian invoice sheets: day-first dates and rupee amounts', () => {
+  const dataset = loadText(fixture('indian-sales.csv'));
+  assert.equal(dataset.dateColumn, 'Invoice Date');
+  assert.deepEqual(aggregate(dataset.rows, 'Invoice Date', 'Amount', dataset).map((group) => [group.key, group.value]), [['2025-04', 125000], ['2025-05', 125500], ['2025-06', 210000]]);
+});
+
+test('a day above 12 decides day-first for the whole column', () => {
+  assert.deepEqual(column(['Date', '03/04/2025', '13/04/2025'], { dayFirst: false }), ['Date', '2025-04-03', '2025-04-13']);
+});
+
+test('a second part above 12 decides month-first even with a day-first locale', () => {
+  assert.deepEqual(column(['Date', '03/04/2025', '04/13/2025'], { dayFirst: true }), ['Date', '2025-03-04', '2025-04-13']);
+});
+
+test('monthly data on the 1st is read as the 1st of each month', () => {
+  assert.deepEqual(column(['Date', '01/04/2025', '01/05/2025', '01/06/2025'], { dayFirst: false }), ['Date', '2025-04-01', '2025-05-01', '2025-06-01']);
+  assert.deepEqual(column(['Date', '04/01/2025', '05/01/2025', '06/01/2025'], { dayFirst: true }), ['Date', '2025-04-01', '2025-05-01', '2025-06-01']);
+});
+
+test('when the data cannot tell, the locale decides', () => {
+  assert.deepEqual(column(['Date', '03/04/2025', '04/05/2025'], { dayFirst: true }), ['Date', '2025-04-03', '2025-05-04']);
+  assert.deepEqual(column(['Date', '03/04/2025', '04/05/2025'], { dayFirst: false }), ['Date', '2025-03-04', '2025-04-05']);
+});
+
+test('dashes, two-digit years, month names and 12-hour times', () => {
+  assert.deepEqual(column(['When', '13-04-25', '14-04-25']), ['When', '2025-04-13', '2025-04-14']);
+  assert.deepEqual(column(['When', '05-Jan-2025', '17 Feb 25', '3-Mar-2025']), ['When', '2025-01-05', '2025-02-17', '2025-03-03']);
+  assert.deepEqual(column(['When', '13/04/2025 2:30 PM', '14/04/2025 12:05 am']), ['When', '2025-04-13 14:30', '2025-04-14 00:05']);
+});
+
+test('version numbers and mostly-text columns are left alone', () => {
+  assert.deepEqual(column(['Ver', '1.2.10', '1.3.11']), ['Ver', '1.2.10', '1.3.11']);
+  assert.deepEqual(column(['Note', 'paid 13/04/2025', 'call back', 'n/a', '14/04/2025']), ['Note', 'paid 13/04/2025', 'call back', 'n/a', '14/04/2025']);
+});
+
+test('rupee notations parse as numbers', () => {
+  assert.equal(toNumber('Rs. 1,50,000/-'), 150000);
+  assert.equal(toNumber('INR 2,500.50'), 2500.5);
+  assert.equal(toNumber('₹1,23,456'), 123456);
+});

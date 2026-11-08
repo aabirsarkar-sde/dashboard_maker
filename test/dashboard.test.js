@@ -146,3 +146,41 @@ test('the ranked table counts groups, not rows', async () => {
   const app = await salesApp();
   assert.equal(app.element('row-count').textContent, 'Showing 2 of 2 groups');
 });
+
+const indian = fs.readFileSync(path.join(__dirname, 'fixtures', 'indian-sales.csv'), 'utf8');
+
+test('an Indian invoice sheet uploads with day-first dates and monthly trend', async () => {
+  const app = bootDashboard({ navigator: { language: 'en-US' } });
+  await app.upload('invoices.csv', indian);
+  assert.equal(app.element('main-chart-heading').textContent, 'Amount over time');
+  // 13/04 forces day-first even in a US browser; Jun vs May is the latest change.
+  assert.equal(app.element('chart-delta').textContent, '+67.3%');
+  assert.match(app.element('chart-delta').title, /compared with/);
+});
+
+test('ambiguous dates follow the browser locale', async () => {
+  const csv = 'Date,Region,Amount\n03/04/2025,West,10\n04/05/2025,East,20\n';
+  const india = bootDashboard({ navigator: { language: 'en-IN' } });
+  await india.upload('a.csv', csv);
+  const us = bootDashboard({ navigator: { language: 'en-US' } });
+  await us.upload('a.csv', csv);
+  assert.notEqual(india.element('main-chart').innerHTML, us.element('main-chart').innerHTML);
+  assert.match(india.element('main-chart').innerHTML, /Apr/);
+  assert.match(us.element('main-chart').innerHTML, /Mar/);
+});
+
+test('KPI badges show real period changes, never Live or Healthy', async () => {
+  const app = await salesApp();
+  const kpis = app.element('kpi-grid').innerHTML;
+  assert.doesNotMatch(kpis, /Live|Healthy|Review|Ready/);
+  assert.match(kpis, /\+50\.0% vs /);
+});
+
+test('Share copies a text summary of the current view', async () => {
+  let copied = '';
+  const app = bootDashboard({ navigator: { language: 'en-IN', clipboard: { writeText: async (text) => { copied = text; } } } });
+  await app.upload('sales.csv', sales);
+  app.prompt('only show East');
+  await app.element('share-button').listeners.click[0]();
+  assert.match(copied, /^sales \(filtered to Region = East\)\n2 rows\. Total Revenue is 500/);
+});

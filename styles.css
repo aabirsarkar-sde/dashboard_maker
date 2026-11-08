@@ -1044,3 +1044,30 @@ body.dark .chart-area .grid-line, body.dark .mini-chart-area .grid-line { stroke
 /* Averages and negative values: the share panel shows full-width bars instead of a donut. */
 .donut-layout.as-bars .donut-chart-area { width: 100%; height: 180px; }
 .donut-layout.as-bars .donut-legend { display: none; }
+
+/* Phones. These come last because the visual refresh above re-sets the sidebar, grid and ask-card
+   rules for every width below 930px, which overrode the earlier phone rules. */
+.topbar-brand { display: none; }
+@media (max-width: 720px) {
+  .sidebar { display: none; }
+  .main-content { width: 100%; margin-left: 0; }
+  .topbar { gap: 12px; justify-content: flex-start; }
+  .topbar-brand { display: flex; align-items: center; }
+  .topbar-actions { margin-left: auto; }
+  .ask-card { grid-template-columns: minmax(0, 1fr); }
+  .ask-sparkle { display: none; }
+  .ask-heading { min-width: 0; }
+  .suggestion-row, .assistant-response { grid-column: 1; }
+  .dashboard-grid, .extra-chart-grid { grid-template-columns: minmax(0, 1fr); }
+  .dashboard-grid > *, .extra-chart-grid > * { min-width: 0; }
+  .filter-controls { min-width: 0; flex-wrap: wrap; }
+  .filter-controls select { min-width: 0; flex: 1 1 130px; }
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+}
+@media (max-width: 420px) {
+  .kpi-card::after, .kpi-icon { display: none; }
+  .kpi-meta { flex-wrap: wrap; row-gap: 2px; }
+  .heading-actions .button { min-width: 0; }
+  th, td { padding-right: 8px; padding-left: 8px; }
+  .table-bar { display: none; }
+}

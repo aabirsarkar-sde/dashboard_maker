@@ -6,7 +6,7 @@ A browser based dashboard builder for Excel and CSV workbooks. It opens with an 
 
 Deploy on Vercel or run locally with `vercel dev` to use the Gemini instruction endpoint in `api/insights.js`. In Vercel, add the key under **Project → Settings → Environment Variables** with the name `GEMINI_API_KEY` and type **Secret**, then redeploy. Never put the key in `app.js`, `index.html`, or a `NEXT_PUBLIC_` variable. Without a configured key, local spreadsheet parsing and direct dashboard controls still work, while AI instructions show a setup message.
 
-Excel workbook parsing loads SheetJS from jsDelivr; workbook rows stay in the browser. AI instructions send the prompt, field names, column types, row counts, and current chart settings to Gemini; raw worksheet rows and cell values are not sent.
+Excel workbook parsing uses SheetJS 0.20.3, served from `vendor/xlsx-0.20.3/` (Apache-2.0, see its LICENSE) rather than a CDN; workbook rows stay in the browser. To upgrade, download the new `xlsx.full.min.js` from cdn.sheetjs.com (npm only has 0.18.5, which has known vulnerabilities), update the script tag in `index.html` and the path in `test/xlsx.test.js`, and run the tests. AI instructions send the prompt, field names, column types, row counts, and current chart settings to Gemini; raw worksheet rows and cell values are not sent.
 
 ## Test it
 
@@ -22,6 +22,9 @@ Run `node --test "test/*.test.js"` (Node 22, no dependencies). `parser.js` holds
 - Change the primary metric, grouping, chart style, filters, and number of ranked rows directly in the dashboard.
 - Prices, rates, scores and ratio-style margins are averaged by default; amounts and counts are totalled. Switch with the Total/Average control or say “average price by region”.
 - Comma, semicolon and tab separated files are detected, including European number and date formats such as `1.234,56` and `31.01.2025`.
+- Text dates such as `13/04/2025`, `01-04-25` and `05-Jan-2025` are read per column: a day above 12, or a part that never changes, settles day-first vs month-first. When a column can't settle it, the browser locale decides (month-first only for US and Philippine English). Amounts written as `Rs. 1,50,000/-` or `INR 2,500` are read as numbers.
+- Trend figures compare the latest period with the one before it. Share sends a text summary of the current view through the phone's share sheet, or copies it on desktop.
+- The layout adapts down to 360px phone screens; charts redraw at the screen's real width.
 - Total, subtotal and unlabelled total rows are left out of the numbers when their values add up, and the subtitle says how many were excluded.
 - Add custom charts or enter instructions such as “show profit by region”, “filter to West”, “switch to a bar chart”, “show top 10”, or “what stands out?”
 - Export the filtered source rows as CSV. Dates export as calendar dates, and text that a spreadsheet would run as a formula is prefixed with a quote.

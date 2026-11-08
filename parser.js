@@ -11,7 +11,8 @@
     if (typeof value === 'number' && Number.isFinite(value)) return value;
     if (value instanceof Date) return NaN;
     if (value == null || String(value).trim() === '') return NaN;
-    let text = String(value).trim().replace(/[,$£€¥₹\s]/g, '');
+    // "Rs. 1,500/-" and "INR 1500" are common in Indian sheets.
+    let text = String(value).trim().replace(/^(?:rs\.?|inr)\s*/i, '').replace(/\/-$/, '').replace(/[,$£€¥₹\s]/g, '');
     const negative = /^\(.*\)$/.test(text);
     text = text.replace(/[()%]/g, '');
     const number = Number(text);
@@ -85,7 +86,71 @@
       return value.replace(/\./g, '').replace(',', '.');
     }));
   }
-  function prepareMatrix(matrix) { return normalizeNumberFormats(normalizeSheetDates(matrix)); }
+  // Text dates such as 13/04/2025, 01-04-25 or 05-Jan-2025 are rewritten to ISO (2025-04-13) so every
+  // later step reads them the same way. The day/month order is decided per column from the data:
+  // a first part above 12 means day first, a second part above 12 means month first, and a part that
+  // never changes (monthly data on the 1st) is the day. Only when the data cannot tell does
+  // options.dayFirst decide.
+  const NUMERIC_DATE = /^(\d{1,2})([\/\-.])(\d{1,2})\2(\d{4}|\d{2})(?:[ T]+(\d{1,2}):(\d{2})(?::\d{2})?\s*([ap]\.?m\.?)?)?$/i;
+  const NAMED_DATE = /^(\d{1,2})[\s\-\/]+([A-Za-z]{3,9})\.?[\s\-\/,]+(\d{4}|\d{2})$/;
+  const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  function fullYear(text) { const year = Number(text); return text.length === 2 ? year + (year < 70 ? 2000 : 1900) : year; }
+  function isoDate(year, month, day, hours = null, minutes = null) {
+    const date = new Date(year, month - 1, day);
+    if (date.getMonth() !== month - 1 || date.getDate() !== day || year < 1900 || year > 2200) return null;
+    const time = hours == null ? '' : ` ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}${time}`;
+  }
+  function readNumericDate(match, dayFirst) {
+    const [first, second] = [Number(match[1]), Number(match[3])];
+    const [day, month] = dayFirst ? [first, second] : [second, first];
+    let hours = match[5] == null ? null : Number(match[5]);
+    const meridiem = (match[7] || '').toLowerCase().replace(/\./g, '');
+    if (hours != null && meridiem === 'pm' && hours < 12) hours += 12;
+    if (hours != null && meridiem === 'am' && hours === 12) hours = 0;
+    return isoDate(fullYear(match[4]), month, day, hours, match[6] == null ? null : Number(match[6]));
+  }
+  function readNamedDate(text) {
+    const match = text.match(NAMED_DATE);
+    const month = match ? MONTHS.indexOf(match[2].slice(0, 3).toLowerCase()) : -1;
+    return month < 0 ? null : isoDate(fullYear(match[3]), month + 1, Number(match[1]));
+  }
+  function columnDayFirst(matches, fallback) {
+    let dayEvidence = 0, monthEvidence = 0;
+    const firsts = new Set(), seconds = new Set();
+    matches.forEach((match) => {
+      const first = Number(match[1]), second = Number(match[3]);
+      if (first > 12 && second <= 12) dayEvidence += 1;
+      if (second > 12 && first <= 12) monthEvidence += 1;
+      firsts.add(first); seconds.add(second);
+    });
+    if (dayEvidence !== monthEvidence) return dayEvidence > monthEvidence;
+    if (matches.length >= 3 && firsts.size === 1 && seconds.size > 1) return true;
+    if (matches.length >= 3 && seconds.size === 1 && firsts.size > 1) return false;
+    return fallback;
+  }
+  function normalizeTextDates(matrix, { dayFirst = true } = {}) {
+    const width = Math.max(0, ...matrix.map((row) => row.length));
+    let output = matrix;
+    for (let column = 0; column < width; column += 1) {
+      const texts = matrix.map((row) => row[column]).filter((value) => typeof value === 'string' && value.trim());
+      const numeric = texts.map((text) => text.trim().match(NUMERIC_DATE)).filter((match) => match && (match[2] !== '.' || match[4].length === 4));
+      const named = texts.filter((text) => readNamedDate(text.trim()));
+      if (numeric.length + named.length < 2 || (numeric.length + named.length) / texts.length < 0.6) continue;
+      const order = columnDayFirst(numeric, dayFirst);
+      if (output === matrix) output = matrix.map((row) => [...row]);
+      output.forEach((row) => {
+        const value = row[column];
+        if (typeof value !== 'string') return;
+        const text = value.trim();
+        const match = text.match(NUMERIC_DATE);
+        const iso = match && (match[2] !== '.' || match[4].length === 4) ? readNumericDate(match, order) : readNamedDate(text);
+        if (iso) row[column] = iso;
+      });
+    }
+    return output;
+  }
+  function prepareMatrix(matrix, options = {}) { return normalizeTextDates(normalizeNumberFormats(normalizeSheetDates(matrix)), options); }
   // The delimiter is the character that splits most lines into the same number of fields.
   function detectDelimiter(text) {
     const lines = text.split(/\r?\n/).filter((line) => line.trim()).slice(0, 30).map((line) => line.replace(/"[^"]*"/g, ''));
@@ -606,7 +671,7 @@
   }
 
   return {
-    metricTotal, aggregate, csvCell, prepareMatrix, detectDelimiter, normalizeNumberFormats, defaultAggregation,
+    metricTotal, aggregate, csvCell, prepareMatrix, normalizeTextDates, detectDelimiter, normalizeNumberFormats, defaultAggregation,
     toNumber, parseDate, unique, cleanCell, cellText, isEmptyCell, parsePeriodHeader, isTotalRow,
     chooseMetric, extractTables, datasetProfile, stripExtension, parseDelimited, detectCurrency, normalizeSheetDates,
   };

@@ -24,7 +24,7 @@ function createElement(id) {
   };
 }
 
-function bootDashboard() {
+function bootDashboard({ navigator } = {}) {
   // Only ids that exist in index.html (or are created at runtime) resolve, as in the browser.
   const pageIds = new Set([...fs.readFileSync(path.join(root, 'index.html'), 'utf8').matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]));
   const elements = {};
@@ -37,6 +37,7 @@ function bootDashboard() {
     Option: function Option(label, value) { this.label = label; this.value = value; },
     localStorage: { getItem() { return null; }, setItem() {} },
     requestAnimationFrame: (callback) => callback(),
+    navigator: navigator || { language: 'en-IN' },
     document: { getElementById: element, querySelector: () => createElement('stub'), addEventListener() {}, body: createElement('body') },
   };
   context.window = context;

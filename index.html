@@ -8,10 +8,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=20261107-2" />
+    <link rel="stylesheet" href="styles.css?v=20261108-2" />
     <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script defer src="parser.js?v=20261107-2"></script>
-    <script defer src="app.js?v=20261107-8"></script>
+    <script defer src="parser.js?v=20261108-1"></script>
+    <script defer src="app.js?v=20261108-3"></script>
   </head>
   <body>
     <div class="app-shell">
@@ -133,6 +133,7 @@
                 <div class="chart-controls">
                   <label><span class="sr-only">Metric</span><select id="main-metric" aria-label="Choose chart metric"></select></label>
                   <label><span class="sr-only">Group by</span><select id="main-dimension" aria-label="Group chart by"></select></label>
+                  <label><span class="sr-only">Total or average</span><select id="main-aggregation" aria-label="Total or average"><option value="sum">Total</option><option value="mean">Average</option></select></label>
                   <label><span class="sr-only">Chart type</span><select id="main-chart-type" aria-label="Choose chart type"><option value="line">Line</option><option value="bar">Bar</option><option value="area">Area</option></select></label>
                   <button class="icon-button panel-menu" data-menu="primary" aria-label="Chart options">···</button>
                 </div>
@@ -157,8 +158,8 @@
 
             <article class="panel secondary-panel">
               <div class="panel-header"><div><div class="panel-overline">MIX</div><h2 id="region-chart-heading">Revenue by region</h2></div><button class="icon-button panel-menu" data-menu="region" aria-label="Chart options">···</button></div>
-              <div class="donut-layout"><div class="donut-chart-area" id="region-chart" role="img" aria-label="Revenue by region chart"></div><div class="donut-legend" id="region-legend"></div></div>
-              <div class="panel-footnote">Share of total revenue</div>
+              <div class="donut-layout" id="region-layout"><div class="donut-chart-area" id="region-chart" role="img" aria-label="Revenue by region chart"></div><div class="donut-legend" id="region-legend"></div></div>
+              <div class="panel-footnote" id="region-footnote">Share of the total</div>
             </article>
 
             <article class="panel table-panel">

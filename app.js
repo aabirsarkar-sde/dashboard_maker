@@ -7,12 +7,13 @@
     mainType: 'line', mainTitle: '', dashboardTitle: '', fileName: '', sheetName: '',
     topN: 5, extraCharts: [], datasets: [], sheetReports: [], activeDatasetIndex: -1,
     periodColumn: '', currencySymbol: '', workbookName: '', workbookCount: 1, toastTimer: null,
+    aggregations: {},
   };
   const palette = ['#8778eb', '#56b47f', '#f0ae59', '#73a4e8', '#e67f9b', '#58b8bf', '#a888d7', '#c2bd70'];
   const $ = (id) => document.getElementById(id);
   const {
-    toNumber, unique, cleanCell, isEmptyCell, sumColumn, aggregate,
-    extractTables, datasetProfile, stripExtension, parseDelimited, detectCurrency, normalizeSheetDates,
+    toNumber, unique, cleanCell, isEmptyCell, metricTotal, aggregate, csvCell, prepareMatrix, detectDelimiter,
+    extractTables, datasetProfile, stripExtension, parseDelimited, detectCurrency,
   } = globalThis.AtlasParser;
 
   function escapeHTML(value) {
@@ -35,7 +36,26 @@
     if (/revenue|sales|amount|profit|price|cost|income|value|total/.test(name)) return money(value, short);
     return short ? compact(value) : new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
   }
-  function sumMetric(rows, metric) { return sumColumn(rows, metric, state.columns); }
+  function methodFor(metric) { return state.aggregations[metric] || 'sum'; }
+  function isAverage(metric) { return methodFor(metric) === 'mean' && state.columns.includes(metric); }
+  // "Average Price", unless the field name already says so.
+  function metricLabel(metric) {
+    if (!metric) return 'Records';
+    return isAverage(metric) && !/\b(avg|average|mean)\b/i.test(metric) ? `Average ${metric}` : metric;
+  }
+  function sumMetric(rows, metric) { return metricTotal(rows, metric, state.columns, methodFor(metric)); }
+  // Axis range that always includes zero, so negatives and values below 1 stay on the chart.
+  function valueDomain(values, padding = 0.12) {
+    let min = Math.min(0, ...values), max = Math.max(0, ...values);
+    if (min === max) max = 1;
+    const span = max - min;
+    return { min: min < 0 ? min - span * padding : 0, max: max > 0 ? max + span * padding : 0 };
+  }
+  function cleanTick(value, domain) { return Math.abs(value) < (domain.max - domain.min) * 1e-9 ? 0 : value; }
+  function phrasePattern(phrase) {
+    return new RegExp(`(?<![\\p{L}\\p{N}])${String(phrase).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u');
+  }
+  function mentions(text, phrase) { return Boolean(String(phrase).trim()) && phrasePattern(phrase).test(text); }
   function showToast(message) {
     const toast = $('toast');
     toast.textContent = message;
@@ -73,6 +93,7 @@
     state.categoryDimension = dataset.categoryDimension;
     state.regionDimension = dataset.regionDimension;
     state.currencySymbol = dataset.currencySymbol || '';
+    state.aggregations = { ...(dataset.aggregations || {}) };
     state.metric = state.metrics[0] || '';
     state.dimension = state.dateColumn || state.dimensions[0] || '';
     state.filters = {};
@@ -225,6 +246,15 @@
     [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 500).forEach(([value]) => select.add(new Option(value, value)));
     select.disabled = false;
   }
+  function setFilter(column, value) {
+    $('filter-column').value = column;
+    updateFilterOptions();
+    const select = $('filter-value');
+    // The dropdown lists the 500 most common values; a rarer one is added so it can be selected.
+    if (value && ![...select.options].some((option) => option.value === value)) select.add(new Option(value, value));
+    select.value = value;
+    applyFilters();
+  }
   function applyFilters() {
     const column = $('filter-column').value;
     const value = $('filter-value').value;
@@ -240,7 +270,7 @@
   }
 
   function aggregatedData(rows, dimension, metric, sort = false) {
-    return aggregate(rows, dimension, metric, { columns: state.columns, dateColumn: state.dateColumn, periodColumn: state.periodColumn, sort });
+    return aggregate(rows, dimension, metric, { columns: state.columns, dateColumn: state.dateColumn, periodColumn: state.periodColumn, sort, method: methodFor(metric) });
   }
 
   function chartYAxis(value, metric) {
@@ -256,17 +286,18 @@
     state.mainType = type;
     const grouped = aggregatedData(state.rows, dimension, metric);
     const data = dimension === state.dateColumn ? grouped : [...grouped].sort((a, b) => b.value - a.value).slice(0, 24);
-    const heading = state.mainTitle || (dimension === state.dateColumn ? `${metric || 'Records'} over time` : `${metric || 'Records'} by ${dimension || 'group'}`);
+    const heading = state.mainTitle || (dimension === state.dateColumn ? `${metricLabel(metric)} over time` : `${metricLabel(metric)} by ${dimension || 'group'}`);
     $('main-chart-heading').textContent = heading;
     $('main-chart-subtitle').textContent = state.rows.length === state.allRows.length ? 'Track your performance across the period' : `Filtered to ${state.rows.length.toLocaleString()} matching rows`;
-    $('main-chart-legend').textContent = metric || 'Records';
+    $('main-chart-legend').textContent = metricLabel(metric);
     $('period-note').textContent = dimension === state.dateColumn ? `By ${dimension}` : `By ${dimension || 'all records'}`;
     $('main-chart').setAttribute('aria-label', `${heading} ${type} chart`);
     const total = sumMetric(state.rows, metric);
     $('chart-total').textContent = metricFormat(total, metric);
     const half = Math.floor(data.length / 2);
-    const first = data.slice(0, half || 1).reduce((sum, item) => sum + item.value, 0);
-    const second = data.slice(half || 1).reduce((sum, item) => sum + item.value, 0);
+    const combine = (items) => (isAverage(metric) ? items.reduce((sum, item) => sum + item.value, 0) / Math.max(items.length, 1) : items.reduce((sum, item) => sum + item.value, 0));
+    const first = combine(data.slice(0, half || 1));
+    const second = combine(data.slice(half || 1));
     const change = first ? ((second - first) / Math.abs(first)) * 100 : 0;
     const delta = $('chart-delta');
     delta.textContent = dimension === state.dateColumn && data.length > 1 ? `${change >= 0 ? '+' : ''}${change.toFixed(1)}%` : `${grouped.length} groups`;
@@ -275,17 +306,18 @@
 
     const width = 720, height = 200, left = 48, right = 8, top = 10, bottom = 29;
     const plotWidth = width - left - right, plotHeight = height - top - bottom;
-    const values = data.map((item) => item.value);
-    const maxValue = Math.max(1, ...values);
-    const niceMax = maxValue * 1.12;
+    const domain = valueDomain(data.map((item) => item.value));
     const count = Math.max(data.length, 1);
-    const x = (index) => left + (count === 1 ? plotWidth / 2 : (index / (count - 1)) * plotWidth);
-    const y = (value) => top + plotHeight - (value / niceMax) * plotHeight;
+    const x = type === 'bar'
+      ? (index) => left + (plotWidth / count) * (index + 0.5)
+      : (index) => left + (count === 1 ? plotWidth / 2 : (index / (count - 1)) * plotWidth);
+    const y = (value) => top + ((domain.max - value) / (domain.max - domain.min)) * plotHeight;
+    const zeroY = y(0);
     const grid = Array.from({ length: 4 }, (_, index) => {
-      const v = (niceMax * (3 - index)) / 3;
+      const v = cleanTick(domain.max - ((domain.max - domain.min) * index) / 3, domain);
       const yy = top + (index / 3) * plotHeight;
       return `<line class="grid-line" x1="${left}" y1="${yy}" x2="${width - right}" y2="${yy}" stroke="#eef0f5" stroke-width="1"/><text x="${left - 8}" y="${yy + 3}" text-anchor="end" fill="#a6aab8" font-size="8" font-family="DM Sans">${escapeXml(chartYAxis(v, metric))}</text>`;
-    }).join('');
+    }).join('') + (domain.min < 0 ? `<line class="zero-line" x1="${left}" y1="${zeroY}" x2="${width - right}" y2="${zeroY}" stroke="#a6aab8" stroke-width="1"/>` : '');
     const labelStep = Math.max(1, Math.ceil(data.length / 7));
     const labels = data.map((item, index) => index % labelStep === 0 || index === data.length - 1
       ? `<text x="${x(index)}" y="${height - 7}" text-anchor="middle" fill="#a6aab8" font-size="8" font-family="DM Sans">${escapeXml(shortLabel(item.label, 12))}</text>` : '').join('');
@@ -293,24 +325,29 @@
     if (type === 'bar') {
       const step = plotWidth / count;
       const barWidth = Math.max(3, Math.min(30, step * .53));
-      series = data.map((item, index) => `<rect x="${x(index) - barWidth / 2}" y="${y(item.value)}" width="${barWidth}" height="${Math.max(0, top + plotHeight - y(item.value))}" rx="3" fill="#8a7aeb"><title>${escapeXml(item.label)}: ${escapeXml(metricFormat(item.value, metric))}</title></rect>`).join('');
+      series = data.map((item, index) => `<rect x="${x(index) - barWidth / 2}" y="${Math.min(y(item.value), zeroY)}" width="${barWidth}" height="${Math.abs(zeroY - y(item.value))}" rx="3" fill="${item.value < 0 ? '#e67f9b' : '#8a7aeb'}"><title>${escapeXml(item.label)}: ${escapeXml(metricFormat(item.value, metric))}</title></rect>`).join('');
     } else {
       const points = data.map((item, index) => `${x(index)},${y(item.value)}`).join(' ');
-      const area = `${left},${top + plotHeight} ${points} ${x(Math.max(data.length - 1, 0))},${top + plotHeight}`;
+      const area = `${x(0)},${zeroY} ${points} ${x(Math.max(data.length - 1, 0))},${zeroY}`;
       series = `${type === 'area' ? `<defs><linearGradient id="main-area-gradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#9182f1" stop-opacity=".27"/><stop offset="100%" stop-color="#9182f1" stop-opacity=".015"/></linearGradient></defs><polygon points="${area}" fill="url(#main-area-gradient)"/>` : ''}<polyline points="${points}" fill="none" stroke="#8878eb" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>${data.map((item, index) => `<circle cx="${x(index)}" cy="${y(item.value)}" r="${data.length > 22 ? 2.2 : 3}" fill="#fff" stroke="#8878eb" stroke-width="2"><title>${escapeXml(item.label)}: ${escapeXml(metricFormat(item.value, metric))}</title></circle>`).join('')}`;
     }
     $('main-chart').innerHTML = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeXml(heading)}">${grid}${series}${labels}</svg>`;
   }
 
-  function renderBars(element, data, metric, limit = 5) {
-    const width = 440, height = 180, left = 112, right = 45, top = 3, rowHeight = 32;
+  // compact draws for a narrow panel, so labels are not shrunk when the SVG scales down.
+  function renderBars(element, data, metric, limit = 5, compactLayout = false) {
+    const width = compactLayout ? 300 : 440, height = 180, left = compactLayout ? 74 : 112, right = compactLayout ? 38 : 45, top = 3, rowHeight = compactLayout ? 29 : 32;
     const shown = [...data].sort((a, b) => b.value - a.value).slice(0, limit);
     if (!shown.length) { element.innerHTML = '<div class="empty-chart">No values available</div>'; return; }
-    const max = Math.max(1, ...shown.map((item) => item.value));
+    const domain = valueDomain(shown.map((item) => item.value), 0);
+    const track = width - left - right;
+    const xOf = (value) => left + ((value - domain.min) / (domain.max - domain.min)) * track;
+    const zeroX = xOf(0);
     const rows = shown.map((item, index) => {
       const y = top + index * rowHeight;
-      const barWidth = Math.max(1, (item.value / max) * (width - left - right));
-      return `<text x="${left - 9}" y="${y + 14}" text-anchor="end" fill="#83889a" font-size="9" font-family="DM Sans">${escapeXml(shortLabel(item.label, 17))}</text><rect x="${left}" y="${y + 4}" width="${width - left - right}" height="9" rx="4.5" fill="#f1f1f7"/><rect x="${left}" y="${y + 4}" width="${barWidth}" height="9" rx="4.5" fill="${palette[index % palette.length]}"><title>${escapeXml(item.label)}: ${escapeXml(metricFormat(item.value, metric))}</title></rect><text x="${width - right + 6}" y="${y + 13}" fill="#555a6f" font-size="8" font-family="DM Sans">${escapeXml(metricFormat(item.value, metric, true))}</text>`;
+      const barX = Math.min(zeroX, xOf(item.value));
+      const barWidth = Math.max(1, Math.abs(xOf(item.value) - zeroX));
+      return `<text x="${left - 9}" y="${y + 14}" text-anchor="end" fill="#83889a" font-size="9" font-family="DM Sans">${escapeXml(shortLabel(item.label, compactLayout ? 11 : 17))}</text><rect x="${left}" y="${y + 4}" width="${track}" height="9" rx="4.5" fill="#f1f1f7"/>${domain.min < 0 ? `<line x1="${zeroX}" y1="${y + 1}" x2="${zeroX}" y2="${y + 16}" stroke="#a6aab8" stroke-width="1"/>` : ''}<rect x="${barX}" y="${y + 4}" width="${barWidth}" height="9" rx="4.5" fill="${item.value < 0 ? '#e67f9b' : palette[index % palette.length]}"><title>${escapeXml(item.label)}: ${escapeXml(metricFormat(item.value, metric))}</title></rect><text x="${width - right + 6}" y="${y + 13}" fill="#555a6f" font-size="8" font-family="DM Sans">${escapeXml(metricFormat(item.value, metric, true))}</text>`;
     }).join('');
     element.innerHTML = `<svg viewBox="0 0 ${width} ${Math.max(height, top + shown.length * rowHeight)}" preserveAspectRatio="none" role="img">${rows}</svg>`;
   }
@@ -318,22 +355,34 @@
     const shown = data.slice(-14);
     if (!shown.length) { element.innerHTML = '<div class="empty-chart">No values available</div>'; return; }
     const width = 440, height = 178, left = 35, right = 5, top = 10, bottom = 25;
-    const max = Math.max(1, ...shown.map((item) => item.value)) * 1.08;
+    const domain = valueDomain(shown.map((item) => item.value), 0.08);
     const plotWidth = width - left - right, plotHeight = height - top - bottom;
     const x = (index) => left + (shown.length === 1 ? plotWidth / 2 : index * plotWidth / (shown.length - 1));
-    const y = (value) => top + plotHeight - (value / max) * plotHeight;
+    const y = (value) => top + ((domain.max - value) / (domain.max - domain.min)) * plotHeight;
     const points = shown.map((item, index) => `${x(index)},${y(item.value)}`).join(' ');
     const step = Math.max(1, Math.ceil(shown.length / 5));
     const labels = shown.map((item, index) => index % step === 0 || index === shown.length - 1 ? `<text x="${x(index)}" y="${height - 5}" text-anchor="middle" fill="#a6aab8" font-size="8" font-family="DM Sans">${escapeXml(shortLabel(item.label, 10))}</text>` : '').join('');
     const grid = [0, 1, 2].map((index) => {
       const yy = top + (index / 2) * plotHeight;
-      return `<line class="grid-line" x1="${left}" y1="${yy}" x2="${width}" y2="${yy}" stroke="#eef0f5"/><text x="${left - 5}" y="${yy + 3}" text-anchor="end" fill="#a6aab8" font-size="7" font-family="DM Sans">${escapeXml(chartYAxis(max * (1 - index / 2), metric))}</text>`;
+      return `<line class="grid-line" x1="${left}" y1="${yy}" x2="${width}" y2="${yy}" stroke="#eef0f5"/><text x="${left - 5}" y="${yy + 3}" text-anchor="end" fill="#a6aab8" font-size="7" font-family="DM Sans">${escapeXml(chartYAxis(cleanTick(domain.max - (domain.max - domain.min) * (index / 2), domain), metric))}</text>`;
     }).join('');
     element.innerHTML = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img">${grid}<polyline points="${points}" fill="none" stroke="#8878eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>${shown.map((item, index) => `<circle cx="${x(index)}" cy="${y(item.value)}" r="3" fill="white" stroke="#8878eb" stroke-width="2"><title>${escapeXml(item.label)}: ${escapeXml(metricFormat(item.value, metric))}</title></circle>`).join('')}${labels}</svg>`;
   }
   function renderDonut(element, legend, data, metric) {
-    const shown = [...data].sort((a, b) => b.value - a.value).slice(0, 6);
-    if (!shown.length) { element.innerHTML = '<div class="empty-chart">No values available</div>'; legend.innerHTML = ''; return; }
+    const asBars = isAverage(metric) || data.some((item) => item.value < 0);
+    $('region-layout').classList.toggle('as-bars', asBars);
+    $('region-footnote').textContent = asBars
+      ? `${isAverage(metric) ? 'Averages' : 'Negative values'} can’t be split into shares, so this shows bars.`
+      : `Share of total ${metricLabel(metric).toLowerCase()}`;
+    if (!data.length) { element.innerHTML = '<div class="empty-chart">No values available</div>'; legend.innerHTML = ''; return; }
+    if (asBars) {
+      renderBars(element, data, metric, 6, true);
+      legend.innerHTML = '';
+      return;
+    }
+    const sorted = [...data].sort((a, b) => b.value - a.value);
+    const rest = sorted.slice(5);
+    const shown = rest.length > 1 ? [...sorted.slice(0, 5), { label: `Other (${rest.length})`, value: rest.reduce((sum, item) => sum + item.value, 0) }] : sorted;
     const total = shown.reduce((sum, item) => sum + item.value, 0) || 1;
     const radius = 54, circumference = 2 * Math.PI * radius;
     let offset = 0;
@@ -343,7 +392,7 @@
       offset += portion;
       return circle;
     }).join('');
-    element.innerHTML = `<svg viewBox="0 0 180 170" role="img" aria-label="Share by category"><circle cx="90" cy="85" r="${radius}" fill="none" stroke="#f1f1f6" stroke-width="20"/>${circles}<text x="90" y="82" text-anchor="middle" fill="#373b52" font-family="Manrope" font-size="16" font-weight="700">${escapeXml(compact(total))}</text><text x="90" y="98" text-anchor="middle" fill="#a0a4b2" font-family="DM Sans" font-size="8">total</text></svg>`;
+    element.innerHTML = `<svg viewBox="0 0 180 170" role="img" aria-label="Share by category"><circle cx="90" cy="85" r="${radius}" fill="none" stroke="#f1f1f6" stroke-width="20"/>${circles}<text x="90" y="82" text-anchor="middle" fill="#373b52" font-family="Manrope" font-size="16" font-weight="700">${escapeXml(metricFormat(total, metric, true))}</text><text x="90" y="98" text-anchor="middle" fill="#a0a4b2" font-family="DM Sans" font-size="8">total</text></svg>`;
     legend.innerHTML = shown.map((item, index) => `<div class="legend-row"><span class="legend-swatch" style="background:${palette[index % palette.length]}"></span><span>${escapeHTML(shortLabel(item.label, 13))}</span><span class="legend-value">${((item.value / total) * 100).toFixed(0)}%</span></div>`).join('');
   }
 
@@ -353,15 +402,19 @@
     const orders = semanticMetric(/orders?|transactions?|quantity|qty|units|count/i, '');
     const profit = semanticMetric(/profit|income/i, '');
     const revenueTotal = sumMetric(state.rows, revenue);
-    const orderTotal = orders ? sumMetric(state.rows, orders) : state.rows.length;
-    const profitTotal = profit ? sumMetric(state.rows, profit) : 0;
+    const revenueIsTotal = Boolean(revenue) && !isAverage(revenue);
+    const ordersAreCounts = Boolean(orders) && !isAverage(orders);
+    const orderTotal = ordersAreCounts ? sumMetric(state.rows, orders) : state.rows.length;
+    const profitIsTotal = Boolean(profit) && !isAverage(profit);
+    const profitTotal = profitIsTotal ? sumMetric(state.rows, profit) : 0;
     const average = orderTotal ? revenueTotal / orderTotal : 0;
     const margin = revenueTotal ? profitTotal / revenueTotal : 0;
+    const showMargin = profitIsTotal && revenueIsTotal && profit !== revenue;
     const items = [
-      { label: revenue || 'Records', value: revenue ? metricFormat(revenueTotal, revenue) : compact(state.rows.length), meta: `${state.rows.length.toLocaleString()} rows in this view`, icon: '↗', change: 'Live' },
-      { label: orders || 'Rows analyzed', value: compact(orderTotal, 0), meta: orders ? `Total ${orders.toLowerCase()}` : 'Included in this view', icon: '▤', change: 'Live' },
-      { label: revenue ? 'Average per order' : 'Columns found', value: revenue ? metricFormat(average, revenue) : String(state.columns.length), meta: revenue ? 'Based on available order count' : 'Detected from your sheet', icon: '◌', change: 'Live' },
-      { label: profit ? 'Profit margin' : 'Categories', value: profit ? `${(margin * 100).toFixed(1)}%` : String(state.dimensions.length), meta: profit ? `${metricFormat(profitTotal, profit)} total profit` : 'Fields available to explore', icon: '⌁', change: profit ? (margin >= .2 ? 'Healthy' : 'Review') : 'Ready' },
+      { label: revenue ? metricLabel(revenue) : 'Records', value: revenue ? metricFormat(revenueTotal, revenue) : compact(state.rows.length), meta: `${state.rows.length.toLocaleString()} rows in this view`, icon: '↗', change: 'Live' },
+      { label: ordersAreCounts ? orders : 'Rows analyzed', value: compact(orderTotal, 0), meta: ordersAreCounts ? `Total ${orders.toLowerCase()}` : 'Included in this view', icon: '▤', change: 'Live' },
+      { label: revenueIsTotal ? (ordersAreCounts ? `Average per ${orders.toLowerCase()}` : 'Average per row') : 'Columns found', value: revenueIsTotal ? metricFormat(average, revenue) : String(state.columns.length), meta: revenueIsTotal ? `${revenue} ÷ ${ordersAreCounts ? orders.toLowerCase() : 'rows'}` : 'Detected from your sheet', icon: '◌', change: 'Live' },
+      { label: showMargin ? 'Profit margin' : 'Categories', value: showMargin ? `${(margin * 100).toFixed(1)}%` : String(state.dimensions.length), meta: showMargin ? `${metricFormat(profitTotal, profit)} total profit` : 'Fields available to explore', icon: '⌁', change: showMargin ? (margin >= .2 ? 'Healthy' : 'Review') : 'Ready' },
     ];
     $('kpi-grid').innerHTML = items.map((item) => `<article class="kpi-card"><div class="kpi-label">${escapeHTML(item.label)}</div><span class="kpi-icon">${item.icon}</span><div class="kpi-value">${escapeHTML(item.value)}</div><div class="kpi-meta"><span class="kpi-change">${escapeHTML(item.change)}</span><span>${escapeHTML(item.meta)}</span></div></article>`).join('');
   }
@@ -373,12 +426,14 @@
     const items = [];
     const topCategory = dimension ? aggregatedData(state.rows, dimension, metric, true)[0] : null;
     if (topCategory) {
-      const share = sumMetric(state.rows, metric) ? (topCategory.value / sumMetric(state.rows, metric)) * 100 : 0;
-      items.push({ icon: '↗', text: `<strong>${escapeHTML(topCategory.label)}</strong> leads ${escapeHTML(dimension.toLowerCase())} with <strong>${escapeHTML(metricFormat(topCategory.value, metric))}</strong> — ${share.toFixed(0)}% of the total.` });
+      const total = sumMetric(state.rows, metric);
+      const shareText = !isAverage(metric) && total > 0 ? ` — ${((topCategory.value / total) * 100).toFixed(0)}% of the total` : '';
+      const leadText = isAverage(metric) ? `has the highest ${escapeHTML(metricLabel(metric).toLowerCase())} among ${escapeHTML(dimension.toLowerCase())} values` : `leads ${escapeHTML(dimension.toLowerCase())}`;
+      items.push({ icon: '↗', text: `<strong>${escapeHTML(topCategory.label)}</strong> ${leadText} with <strong>${escapeHTML(metricFormat(topCategory.value, metric))}</strong>${shareText}.` });
     }
     if (region && region !== dimension) {
       const topRegion = aggregatedData(state.rows, region, metric, true)[0];
-      if (topRegion) items.push({ icon: '◎', text: `<strong>${escapeHTML(topRegion.label)}</strong> is your strongest ${escapeHTML(region.toLowerCase())}, contributing <strong>${escapeHTML(metricFormat(topRegion.value, metric))}</strong>.` });
+      if (topRegion) items.push({ icon: '◎', text: `<strong>${escapeHTML(topRegion.label)}</strong> is your strongest ${escapeHTML(region.toLowerCase())}${isAverage(metric) ? ', averaging' : ', contributing'} <strong>${escapeHTML(metricFormat(topRegion.value, metric))}</strong>.` });
     }
     if (state.dateColumn) {
       const trend = aggregatedData(state.rows, state.dateColumn, metric);
@@ -395,17 +450,19 @@
   function renderTable() {
     const dimension = state.categoryDimension || state.dimensions[0];
     const metric = $('main-metric').value || state.metric;
-    const rows = dimension ? aggregatedData(state.rows, dimension, metric, true).slice(0, state.topN) : state.rows.slice(0, state.topN).map((row, index) => ({ label: `Row ${index + 1}`, value: metric ? toNumber(row[metric]) || 0 : 1, detail: row }));
+    const groups = dimension ? aggregatedData(state.rows, dimension, metric, true) : state.rows.map((row, index) => ({ label: `Row ${index + 1}`, value: metric ? toNumber(row[metric]) || 0 : 1, detail: row }));
+    const rows = groups.slice(0, state.topN);
     const total = sumMetric(state.rows, metric);
-    $('table-metric-label').textContent = metric || 'records';
-    $('table-head').innerHTML = `<tr><th>#</th><th>${escapeHTML(dimension || 'Record')}</th><th>${escapeHTML(metric || 'Value')}</th><th>Share</th></tr>`;
-    const maximum = Math.max(1, ...rows.map((row) => row.value));
+    const showShare = !isAverage(metric) && total > 0;
+    $('table-metric-label').textContent = metricLabel(metric).toLowerCase();
+    $('table-head').innerHTML = `<tr><th>#</th><th>${escapeHTML(dimension || 'Record')}</th><th>${escapeHTML(metricLabel(metric))}</th><th>${showShare ? 'Share' : 'Relative'}</th></tr>`;
+    const maximum = Math.max(...rows.map((row) => Math.abs(row.value)), Number.MIN_VALUE);
     $('table-body').innerHTML = rows.map((row, index) => {
-      const pct = total ? (row.value / total) * 100 : 0;
-      const bar = Math.max(2, (row.value / maximum) * 100);
-      return `<tr><td><span class="rank-cell">${index + 1}</span></td><td>${escapeHTML(row.label)}</td><td>${escapeHTML(metricFormat(row.value, metric))}</td><td>${pct.toFixed(1)}% <span class="table-bar"><i style="width:${bar}%"></i></span></td></tr>`;
+      const pct = showShare ? `${((row.value / total) * 100).toFixed(1)}% ` : '';
+      const bar = Math.max(2, (Math.abs(row.value) / maximum) * 100);
+      return `<tr><td><span class="rank-cell">${index + 1}</span></td><td>${escapeHTML(row.label)}</td><td>${escapeHTML(metricFormat(row.value, metric))}</td><td>${pct}<span class="table-bar"><i style="width:${bar}%${row.value < 0 ? ';background:#e67f9b' : ''}"></i></span></td></tr>`;
     }).join('');
-    $('row-count').textContent = `Showing ${rows.length} of ${state.rows.length.toLocaleString()} groups`;
+    $('row-count').textContent = `Showing ${rows.length} of ${groups.length.toLocaleString()} ${dimension ? 'groups' : 'rows'}`;
   }
 
   function renderExtraCharts() {
@@ -431,10 +488,13 @@
     selectOptions($('main-metric'), metrics, state.metric);
     selectOptions($('main-dimension'), dimensions.length ? dimensions : [''], state.dimension, (value) => value || 'All records');
     if (!$('main-chart-type').value) $('main-chart-type').value = state.mainType;
+    const aggregation = $('main-aggregation');
+    aggregation.disabled = !state.columns.includes(state.metric);
+    aggregation.value = methodFor(state.metric);
     const catData = state.categoryDimension ? aggregatedData(state.rows, state.categoryDimension, $('main-metric').value, true) : [];
     const regionData = state.regionDimension ? aggregatedData(state.rows, state.regionDimension, $('main-metric').value, true) : catData;
-    $('category-chart-heading').textContent = `${$('main-metric').value || 'Records'} by ${state.categoryDimension || 'group'}`;
-    $('region-chart-heading').textContent = `${$('main-metric').value || 'Records'} by ${state.regionDimension || state.categoryDimension || 'group'}`;
+    $('category-chart-heading').textContent = `${metricLabel($('main-metric').value)} by ${state.categoryDimension || 'group'}`;
+    $('region-chart-heading').textContent = `${metricLabel($('main-metric').value)} by ${state.regionDimension || state.categoryDimension || 'group'}`;
     $('category-footnote').textContent = state.categoryDimension ? `By ${state.categoryDimension}` : 'Add a categorical field to see a breakdown';
     renderKpis();
     renderMainChart();
@@ -479,9 +539,9 @@
         try {
           if (extension === 'csv' || extension === 'tsv') {
             const text = await file.text();
-            const firstLine = text.split('\n', 1)[0];
-            const delimiter = extension === 'tsv' ? '\t' : (firstLine.match(/,/g) || []).length >= (firstLine.match(/\t/g) || []).length ? ',' : '\t';
-            const matrix = parseDelimited(text.replace(/^\uFEFF/, ''), delimiter).map((row) => row.map(cleanCell));
+            const clean = text.replace(/^\uFEFF/, '');
+            const delimiter = extension === 'tsv' ? '\t' : detectDelimiter(clean);
+            const matrix = prepareMatrix(parseDelimited(clean, delimiter).map((row) => row.map(cleanCell)));
             sheetMatrices.push({
               sheetName: files.length > 1 ? `${fileLabels[fileIndex]} · Data` : stripExtension(file.name),
               sourceFileName: file.name,
@@ -499,7 +559,7 @@
             sheetName: files.length > 1 ? `${fileLabels[fileIndex]} · ${sheetName}` : sheetName,
             sourceFileName: file.name,
             sourceFileIndex: fileIndex,
-            matrix: normalizeSheetDates(XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '', raw: true, blankrows: true })),
+            matrix: prepareMatrix(XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '', raw: true, blankrows: true })),
           }));
           const fileCurrencySymbol = detectCurrency(workbook, matrices, XLSX.utils);
           matrices.forEach((sheet) => { sheet.sheetCurrencySymbol = fileCurrencySymbol; });
@@ -525,12 +585,13 @@
 
   function findNamedField(query, fields) {
     const lower = query.toLowerCase();
-    return [...fields].sort((a, b) => b.length - a.length).find((field) => lower.includes(field.toLowerCase())) || '';
+    return [...fields].sort((a, b) => b.length - a.length).find((field) => mentions(lower, field)) || '';
   }
   function findNamedValue(query) {
     const candidates = [];
     state.dimensions.forEach((column) => unique(state.allRows.map((row) => row[column])).forEach((value) => candidates.push({ column, value })));
-    return candidates.sort((a, b) => String(b.value).length - String(a.value).length).find((candidate) => query.toLowerCase().includes(String(candidate.value).toLowerCase())) || null;
+    const lower = query.toLowerCase();
+    return candidates.sort((a, b) => String(b.value).length - String(a.value).length).find((candidate) => mentions(lower, candidate.value)) || null;
   }
   function summarizeCurrentData() {
     const metric = $('main-metric').value || state.metric;
@@ -543,7 +604,7 @@
       const change = first ? ((last - first) / Math.abs(first)) * 100 : 0;
       return ` The latest period is ${change >= 0 ? 'up' : 'down'} ${Math.abs(change).toFixed(1)}% versus the first.`;
     })() : '';
-    return `I looked across ${state.rows.length.toLocaleString()} rows. Total ${metric || 'records'} is ${metricFormat(total, metric)}${top ? `, with ${top.label} leading ${dimension} at ${metricFormat(top.value, metric)}` : ''}.${trendText} The dashboard has been refreshed with those patterns.`;
+    return `I looked across ${state.rows.length.toLocaleString()} rows. ${isAverage(metric) ? metricLabel(metric) : `Total ${metric || 'records'}`} is ${metricFormat(total, metric)}${top ? `, with ${top.label} leading ${dimension} at ${metricFormat(top.value, metric)}` : ''}.${trendText} The dashboard has been refreshed with those patterns.`;
   }
   function aiContext() {
     return {
@@ -584,10 +645,7 @@
       const value = String(result.filterValue ?? '');
       const exists = column && state.allRows.some((row) => String(row[column] ?? '').trim() === value);
       if (!exists) { setResponse('I couldn’t match that filter to a value in the current data. Choose a field and value from the filter bar.'); return; }
-      $('filter-column').value = column;
-      updateFilterOptions();
-      $('filter-value').value = value;
-      applyFilters();
+      setFilter(column, value);
       setResponse(result.message || `Filtered ${column} to “${value}”.`);
       return;
     }
@@ -599,7 +657,7 @@
       return;
     }
     if (action === 'set_theme' && ['dark', 'light'].includes(result.theme)) {
-      document.body.classList.toggle('dark', result.theme === 'dark');
+      setTheme(result.theme === 'dark');
       setResponse(result.message || `Switched to ${result.theme} mode.`);
       return;
     }
@@ -644,27 +702,25 @@
       renderWorkbookOverview();
       return;
     }
-    const openSheet = lower.match(/(?:open|switch to|go to|analyze|analyse)\s+(?:the\s+)?(?:sheet\s+)?(.+)/i);
-    if (openSheet?.[1]) {
-      const query = openSheet[1].trim().replace(/["']/g, '');
-      const targetIndex = state.datasets.findIndex((dataset) => dataset.title.toLowerCase() === query || dataset.sheetName.toLowerCase() === query || dataset.title.toLowerCase().includes(query));
-      if (targetIndex >= 0) { activateDataset(targetIndex); setResponse(`Opened the ${state.datasets[targetIndex].title} view.`); }
-      else setResponse(`I couldn’t find a worksheet or table called “${query}”. Open All sheets to see the scanned workbook.`);
-      return;
+    // "open X" only wins when X is a sheet; "analyze revenue" or "switch to bars" fall through.
+    const openSheet = lower.match(/\b(open|switch to|go to|analy[sz]e)\s+(?:the\s+)?(?:sheet\s+|tab\s+)?(.+)/);
+    let missingSheet = '';
+    if (openSheet) {
+      const query = openSheet[2].trim().replace(/["'.!?]/g, '');
+      const targetIndex = state.datasets.findIndex((dataset) => dataset.title.toLowerCase() === query || dataset.sheetName.toLowerCase() === query || (query.length > 2 && dataset.title.toLowerCase().includes(query)));
+      if (targetIndex >= 0) { activateDataset(targetIndex); setResponse(`Opened the ${state.datasets[targetIndex].title} view.`); return; }
+      if (!openSheet[1].startsWith('analy')) missingSheet = query;
     }
     if (/clear (all )?filters?|reset filters?|remove filter/.test(lower)) {
-      $('filter-column').value = '';
-      updateFilterOptions();
-      $('filter-value').value = '';
-      applyFilters();
+      setFilter('', '');
       setResponse('Filters cleared. You’re looking at all rows again.');
       return;
     }
     if (/dark mode|make it dark|dark theme/.test(lower)) {
-      document.body.classList.add('dark'); setResponse('Dark mode is on.'); return;
+      setTheme(true); setResponse('Dark mode is on.'); return;
     }
     if (/light mode|make it light|light theme/.test(lower)) {
-      document.body.classList.remove('dark'); setResponse('Light mode is on.'); return;
+      setTheme(false); setResponse('Light mode is on.'); return;
     }
     if (/hide (the )?insights?|hide what.?s moving/.test(lower)) {
       $('insights-panel').hidden = true; setResponse('The insights panel is hidden.'); return;
@@ -684,9 +740,12 @@
       state.mainTitle = chartRename[1].replace(/["']/g, '').trim(); renderMainChart();
       setResponse(`Main chart renamed to “${state.mainTitle}”.`); return;
     }
-    if (/bar chart|bars|column chart/.test(lower)) { $('main-chart-type').value = 'bar'; renderMainChart(); setResponse('Switched the main visualization to bars.'); return; }
-    if (/area chart|filled area/.test(lower)) { $('main-chart-type').value = 'area'; renderMainChart(); setResponse('Switched the main visualization to an area chart.'); return; }
-    if (/line chart|lines|trend line/.test(lower)) { $('main-chart-type').value = 'line'; renderMainChart(); setResponse('Switched the main visualization to a line chart.'); return; }
+    // Chart words only count as a style request in phrases like "bar chart" or "as bars",
+    // so "revenue by product lines" is not read as "switch to a line chart".
+    const chartType = /\b(bar|column)s?\s+(chart|graph)s?\b|\b(as|to|use|with|in)\s+(a\s+)?(bars|columns)\b|^\s*(bars?|columns?)\s*$/.test(lower) ? 'bar'
+      : /\barea\s+(chart|graph)s?\b|\bfilled area\b|\b(as|to|use|with|in)\s+(an\s+)?area\b|^\s*area\s*$/.test(lower) ? 'area'
+        : /\bline\s+(chart|graph)s?\b|\btrend ?line\b|\b(as|to|use|with|in)\s+(a\s+)?lines?\b|^\s*lines?\s*$/.test(lower) ? 'line' : '';
+    const chartTypeName = { bar: 'bars', area: 'an area chart', line: 'a line chart' }[chartType];
     if (/top\s+\d+/.test(lower)) {
       state.topN = Math.max(1, Math.min(20, Number(lower.match(/top\s+(\d+)/)[1])));
       renderTable(); setResponse(`The performers table now shows the top ${state.topN}.`); return;
@@ -694,27 +753,36 @@
     if (/filter|only show|show only|just show|limit to/.test(lower)) {
       const match = findNamedValue(lower);
       if (match) {
-        $('filter-column').value = match.column;
-        updateFilterOptions();
-        $('filter-value').value = match.value;
-        applyFilters();
+        setFilter(match.column, match.value);
         setResponse(`Filtered ${match.column} to “${match.value}”. You can clear it from the filter bar.`);
       } else { askAI(text); }
       return;
     }
     const namedMetric = findNamedField(lower, state.metrics);
     const namedDimension = findNamedField(lower, [...(state.dateColumn ? [state.dateColumn] : []), ...state.dimensions]);
-    if (namedMetric && namedDimension && (/\bby\b|group|breakdown|against/.test(lower))) {
+    // "average price" / "total price": look for the word outside the field names themselves.
+    const unnamed = [namedMetric, namedDimension].filter(Boolean).reduce((text, field) => text.replace(phrasePattern(field), ' '), lower);
+    const requestedMethod = /\b(average|avg|mean)\b/.test(unnamed) ? 'mean' : /\b(total|sum)\b/.test(unnamed) ? 'sum' : '';
+    const styleNote = chartType ? ` as ${chartTypeName}` : '';
+    if (namedMetric && namedDimension && (/\bby\b|group|breakdown|against|per\b/.test(lower))) {
       state.metric = namedMetric;
       state.dimension = namedDimension;
       state.categoryDimension = namedDimension;
+      if (requestedMethod) state.aggregations[namedMetric] = requestedMethod;
+      if (chartType) $('main-chart-type').value = chartType;
       renderDashboard();
-      setResponse(`Now showing ${namedMetric} by ${namedDimension}. You can adjust the metric, grouping, and chart style above the chart.`);
+      setResponse(`Now showing ${metricLabel(namedMetric)} by ${namedDimension}${styleNote}. You can adjust the metric, grouping, and chart style above the chart.`);
       return;
     }
-    if (namedMetric && /metric|show|plot|chart|compare/.test(lower)) {
-      state.metric = namedMetric; renderDashboard(); setResponse(`The dashboard is now focused on ${namedMetric}.`); return;
+    if (namedMetric && (requestedMethod || chartType || /metric|show|plot|chart|compare|focus/.test(lower))) {
+      state.metric = namedMetric;
+      if (requestedMethod) state.aggregations[namedMetric] = requestedMethod;
+      if (chartType) $('main-chart-type').value = chartType;
+      renderDashboard();
+      setResponse(`The dashboard is now focused on ${metricLabel(namedMetric)}${styleNote}.`);
+      return;
     }
+    if (chartType) { $('main-chart-type').value = chartType; renderMainChart(); setResponse(`Switched the main visualization to ${chartTypeName}.`); return; }
     if (/add (a )?(new )?chart|another chart|new visualization/.test(lower)) { addChart(); setResponse('Added a chart. Use its selectors to choose the metric, grouping, and style.'); return; }
     if (/remove (the )?(last )?chart|delete chart/.test(lower)) {
       if (state.extraCharts.length) { state.extraCharts.pop(); renderExtraCharts(); setResponse('Removed the last custom chart.'); }
@@ -722,6 +790,7 @@
       return;
     }
     if (/what stands out|summari[sz]e|insight|analy[sz]e|tell me about|what do you see|overview/.test(lower)) { setResponse(summarizeCurrentData()); return; }
+    if (missingSheet) { setResponse(`I couldn’t find a worksheet or table called “${missingSheet}”. Open All sheets to see the scanned workbook.`); return; }
     askAI(text);
   }
 
@@ -733,8 +802,8 @@
   function downloadRows(rows, filename) {
     if (!rows.length) { showToast('There are no rows to export in this view.'); return; }
     const headers = state.columns;
-    const escapeCell = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-    const csv = [headers.map(escapeCell).join(','), ...rows.map((row) => headers.map((header) => escapeCell(row[header])).join(','))].join('\r\n');
+    // The byte-order mark makes Excel read UTF-8 (₹, €, accented names) correctly.
+    const csv = `\uFEFF${[headers.map(csvCell).join(','), ...rows.map((row) => headers.map((header) => csvCell(row[header])).join(','))].join('\r\n')}`;
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     link.download = filename;
@@ -776,18 +845,15 @@
     });
     $('filter-column').addEventListener('change', () => { updateFilterOptions(); $('filter-value').value = ''; applyFilters(); });
     $('filter-value').addEventListener('change', applyFilters);
-    $('clear-filter').addEventListener('click', () => { $('filter-column').value = ''; updateFilterOptions(); $('filter-value').value = ''; applyFilters(); });
+    $('clear-filter').addEventListener('click', () => setFilter('', ''));
     $('main-metric').addEventListener('change', () => { state.metric = $('main-metric').value; renderDashboard(); });
     $('main-dimension').addEventListener('change', () => { state.dimension = $('main-dimension').value; renderDashboard(); });
     $('main-chart-type').addEventListener('change', renderMainChart);
+    $('main-aggregation').addEventListener('change', () => { state.aggregations[state.metric] = $('main-aggregation').value; renderDashboard(); });
     $('prompt-form').addEventListener('submit', (event) => { event.preventDefault(); handlePrompt($('prompt-input').value); $('prompt-input').value = ''; });
     $('suggestions').addEventListener('click', (event) => { const button = event.target.closest('[data-prompt]'); if (button) handlePrompt(button.dataset.prompt); });
     $('refresh-insights').addEventListener('click', () => { renderInsights(); showToast('Insights refreshed using the current view.'); });
-    $('theme-toggle').addEventListener('click', () => {
-      document.body.classList.toggle('dark');
-      syncThemeControl();
-      try { localStorage.setItem('atlas-theme', document.body.classList.contains('dark') ? 'dark' : 'light'); } catch { /* Private browsing can disable storage. */ }
-    });
+    $('theme-toggle').addEventListener('click', () => setTheme(!document.body.classList.contains('dark')));
     $('add-chart').addEventListener('click', addChart);
     $('export-button').addEventListener('click', () => downloadRows(state.rows, `${stripExtension(state.fileName) || 'atlas'}-data.csv`));
     $('table-download').addEventListener('click', () => downloadRows(state.rows, `${stripExtension(state.fileName) || 'atlas'}-data.csv`));
@@ -816,6 +882,11 @@
   if (savedTheme === 'dark') document.body.classList.add('dark');
   syncThemeControl();
 
+  function setTheme(dark) {
+    document.body.classList.toggle('dark', dark);
+    syncThemeControl();
+    try { localStorage.setItem('atlas-theme', dark ? 'dark' : 'light'); } catch { /* Private browsing can disable storage. */ }
+  }
   function syncThemeControl() {
     const dark = document.body.classList.contains('dark');
     $('theme-toggle').setAttribute('aria-pressed', String(dark));

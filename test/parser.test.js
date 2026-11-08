@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { parseDelimited, extractTables, datasetProfile, parseDate, cellText, aggregate, sumColumn, isTotalRow, normalizeSheetDates } = require('../parser.js');
+const { parseDelimited, extractTables, datasetProfile, parseDate, cellText, aggregate, metricTotal, isTotalRow, normalizeSheetDates } = require('../parser.js');
 
 function load(fixture) {
   const text = fs.readFileSync(path.join(__dirname, 'fixtures', fixture), 'utf8');
@@ -17,7 +17,7 @@ test('finds the header below title rows', () => {
 
 test('total and subtotal rows are not counted as data', () => {
   const dataset = load('sales-with-totals.csv');
-  assert.equal(sumColumn(dataset.rows, 'Revenue', dataset.columns), 600);
+  assert.equal(metricTotal(dataset.rows, 'Revenue', dataset.columns), 600);
   assert.equal(dataset.excludedTotalRows, 2);
 });
 
@@ -35,7 +35,7 @@ for (const label of ['Total Wine', 'Totally Fresh', 'Acme', '']) {
 
 test('total rows in wide period tables are skipped when reshaping', () => {
   const dataset = load('wide-periods.csv');
-  assert.equal(sumColumn(dataset.rows, dataset.metrics[0], dataset.columns), 210);
+  assert.equal(metricTotal(dataset.rows, dataset.metrics[0], dataset.columns), 210);
   assert.equal(dataset.excludedTotalRows, 1);
 });
 
@@ -95,4 +95,73 @@ test('wide tables with year headers keep Period out of the measures', () => {
   const dataset = datasetProfile(tables[0], 'Sheet', 0, 'wide.csv');
   assert.equal(dataset.dateColumn, 'Period');
   assert.ok(!dataset.metrics.includes('Period'));
+});
+
+const { detectDelimiter, prepareMatrix, defaultAggregation, csvCell } = require('../parser.js');
+const loadText = (text, delimiter = detectDelimiter(text)) => {
+  const tables = extractTables(prepareMatrix(parseDelimited(text, delimiter)), 'Sheet');
+  return datasetProfile(tables[0], 'Sheet', 0, 'file.csv');
+};
+const fixture = (name) => fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
+
+test('semicolon files with decimal commas and dotted dates are read', () => {
+  const dataset = loadText(fixture('european.csv'));
+  assert.deepEqual(dataset.columns, ['Produkt', 'Region', 'Umsatz', 'Datum']);
+  assert.equal(metricTotal(dataset.rows, 'Umsatz', dataset.columns), 3334.4);
+  assert.equal(dataset.dateColumn, 'Datum');
+  assert.deepEqual(aggregate(dataset.rows, 'Datum', 'Umsatz', dataset).map((group) => group.key), ['2025-01', '2025-02', '2025-03']);
+});
+
+test('delimiter detection prefers the consistent separator', () => {
+  assert.equal(detectDelimiter('a;b;c\n1;2,5;3\n4;5,5;6\n'), ';');
+  assert.equal(detectDelimiter('Report, Q3\n\na,b,c\n1,2,3\n4,5,6\n'), ',');
+  assert.equal(detectDelimiter('a\tb\n1\t2\n'), '\t');
+});
+
+test('dot-decimal files keep their meaning', () => {
+  const dataset = loadText('Item,Amount\nA,"1,234.50"\nB,99.90\nC,"2,000.00"\n');
+  assert.equal(metricTotal(dataset.rows, 'Amount', dataset.columns), 3334.4);
+});
+
+test('dd.mm.yyyy dates parse and impossible ones do not', () => {
+  const date = parseDate('31.01.2025');
+  assert.deepEqual([date.getFullYear(), date.getMonth(), date.getDate()], [2025, 0, 31]);
+  assert.equal(parseDate('31.02.2025'), null);
+});
+
+test('prices, rates and ratio margins are averaged; amounts are summed', () => {
+  const dataset = load('prices.csv');
+  assert.deepEqual(dataset.aggregations, { 'Total Price': 'sum', Quantity: 'sum', 'Unit Price': 'mean', Margin: 'mean' });
+  assert.equal(metricTotal(dataset.rows, 'Unit Price', dataset.columns, 'mean'), 20);
+  assert.deepEqual(aggregate(dataset.rows, 'Product', 'Unit Price', { ...dataset, method: 'mean', sort: true }).map((group) => [group.label, group.value]), [['Lamp', 30], ['Shirt', 15]]);
+  assert.equal(defaultAggregation('Interest Rate', []), 'mean');
+  assert.equal(defaultAggregation('Gross Margin', [{ 'Gross Margin': 1200 }]), 'sum');
+});
+
+test('an unlabelled total row is excluded when its numbers add up', () => {
+  const dataset = load('unlabelled-total.csv');
+  assert.equal(dataset.rows.length, 3);
+  assert.equal(metricTotal(dataset.rows, 'Revenue', dataset.columns), 600);
+  assert.equal(dataset.excludedTotalRows, 1);
+});
+
+test('pivot subtotals labelled Total in a later column are excluded', () => {
+  const dataset = load('pivot-subtotals.csv');
+  assert.equal(metricTotal(dataset.rows, 'Revenue', dataset.columns), 350);
+  assert.equal(dataset.excludedTotalRows, 2);
+});
+
+test('"Total" as an ordinary value is kept when the numbers do not add up', () => {
+  const dataset = load('total-as-value.csv');
+  assert.equal(dataset.rows.length, 3);
+  assert.equal(dataset.excludedTotalRows, 0);
+});
+
+test('CSV cells neutralise formulas but keep numbers and dates readable', () => {
+  assert.equal(csvCell('=HYPERLINK("x")'), `"'=HYPERLINK(""x"")"`);
+  assert.equal(csvCell('@SUM(A1)'), `"'@SUM(A1)"`);
+  assert.equal(csvCell('-12.5'), '"-12.5"');
+  assert.equal(csvCell(-12.5), '"-12.5"');
+  assert.equal(csvCell(new Date(2025, 0, 31)), '"2025-01-31"');
+  assert.equal(csvCell(new Date(2025, 0, 31, 9, 5)), '"2025-01-31 09:05"');
 });

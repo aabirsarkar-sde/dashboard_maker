@@ -1,0 +1,4 @@
+Product,Region,Unit Price,Quantity,Total Price,Margin
+Shirt,West,10,2,20,0.2
+Shirt,East,20,1,20,0.3
+Lamp,East,30,3,90,0.1

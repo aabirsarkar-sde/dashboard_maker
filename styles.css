@@ -201,7 +201,8 @@ select:disabled { color: #b9bdc9; background: #fafbfc; }
 .chart-controls { display: flex; align-items: center; gap: 6px; }
 .chart-controls select { height: 28px; max-width: 127px; font-size: 8px; }
 .chart-controls label:nth-child(2) select { max-width: 100px; }
-.chart-controls label:nth-child(3) select { max-width: 72px; }
+.chart-controls label:nth-child(3) select { max-width: 78px; }
+.chart-controls label:nth-child(4) select { max-width: 72px; }
 .panel-menu { width: 27px; height: 28px; font-size: 14px; letter-spacing: 1px; }
 .chart-summary { display: flex; align-items: center; gap: 9px; margin: 17px 0 1px; }
 .chart-summary strong { color: #31354c; font: 700 22px 'Manrope', sans-serif; letter-spacing: -.8px; }
@@ -374,7 +375,8 @@ body.dark .chart-area .grid-line, body.dark .mini-chart-area .grid-line { stroke
   .secondary-panel { min-height: 260px; }
   .chart-controls select { max-width: 100px; }
   .chart-controls label:nth-child(2) select { max-width: 84px; }
-  .chart-controls label:nth-child(3) select { max-width: 62px; }
+  .chart-controls label:nth-child(3) select { max-width: 70px; }
+  .chart-controls label:nth-child(4) select { max-width: 62px; }
   .extra-chart-grid { grid-template-columns: 1fr; }
   .chart-area { height: 196px; }
   .page-footer { gap: 10px; line-height: 1.5; }
@@ -395,7 +397,8 @@ body.dark .chart-area .grid-line, body.dark .mini-chart-area .grid-line { stroke
   .chart-controls { gap: 4px; }
   .chart-controls select { max-width: 84px; padding-left: 5px; }
   .chart-controls label:nth-child(2) select { max-width: 70px; }
-  .chart-controls label:nth-child(3) select { max-width: 54px; }
+  .chart-controls label:nth-child(3) select { max-width: 62px; }
+  .chart-controls label:nth-child(4) select { max-width: 54px; }
   .extra-controls select { max-width: 88px; }
   .panel-menu { width: 23px; }
   .donut-layout { gap: 3px; }
@@ -607,10 +610,12 @@ select:disabled { color: #79859a; background: #f2f4f8; }
 .panel-overline { margin-bottom: 7px; color: #687891; font-size: 10px; }
 .panel h2 { color: #263751; font-size: 17px; letter-spacing: -.2px; }
 .panel-header p { color: #596982; font-size: 12px; }
-.chart-controls { gap: 8px; }
-.chart-controls select { height: 35px; max-width: 150px; font-size: 11px; }
+.chart-controls { gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.chart-controls label { flex: none; }
+.chart-controls select { height: 35px; max-width: 140px; font-size: 11px; }
 .chart-controls label:nth-child(2) select { max-width: 120px; }
-.chart-controls label:nth-child(3) select { max-width: 88px; }
+.chart-controls label:nth-child(3) select { max-width: 108px; }
+.chart-controls label:nth-child(4) select { max-width: 84px; }
 .panel-menu { width: 34px; height: 35px; border-radius: 10px; }
 .chart-summary { gap: 11px; margin-top: 20px; }
 .chart-summary strong { color: #1c2a43; font-size: 27px; }
@@ -620,9 +625,9 @@ select:disabled { color: #79859a; background: #f2f4f8; }
 .chart-area { height: 225px; margin-top: 9px; }
 .chart-area text, .mini-chart-area text { fill: #586982 !important; font-size: 10px !important; }
 .chart-area .grid-line, .mini-chart-area .grid-line { stroke: #dfe6ef !important; }
-.donut-chart-area text:first-of-type { fill: #1c2a43 !important; }
-.donut-chart-area text:not(:first-of-type) { fill: #586982 !important; font-size: 10px !important; }
-.donut-chart-area circle:first-child { stroke: #e2e8f0; }
+.donut-layout:not(.as-bars) .donut-chart-area text:first-of-type { fill: #1c2a43 !important; }
+.donut-layout:not(.as-bars) .donut-chart-area text:not(:first-of-type) { fill: #586982 !important; font-size: 10px !important; }
+.donut-layout:not(.as-bars) .donut-chart-area circle:first-child { stroke: #e2e8f0; }
 .chart-footer { margin-top: 7px; color: #586880; font-size: 11px; }
 .legend-line { width: 18px; height: 3px; }
 .period-note { color: #69778d; }
@@ -806,8 +811,8 @@ body.dark .scan-status { color: #d0cbff; background: #292949; }
 body.dark .upload-error { border: 1px solid #704452; color: #ffb2bc; background: #3d2634; }
 body.dark .page-footer { color: #9eacc2; }
 body.dark .chart-area text, body.dark .mini-chart-area text, body.dark .donut-chart-area text { fill: #bfccdf !important; }
-body.dark .donut-chart-area text:first-of-type { fill: #edf2ff !important; }
-body.dark .donut-chart-area circle:first-child { stroke: #34445f; }
+body.dark .donut-layout:not(.as-bars) .donut-chart-area text:first-of-type { fill: #edf2ff !important; }
+body.dark .donut-layout:not(.as-bars) .donut-chart-area circle:first-child { stroke: #34445f; }
 body.dark .chart-area .grid-line, body.dark .mini-chart-area .grid-line { stroke: #34445f !important; }
 
 @media (max-width: 1180px) {
@@ -863,7 +868,8 @@ body.dark .chart-area .grid-line, body.dark .mini-chart-area .grid-line { stroke
   .chart-controls { flex-wrap: wrap; justify-content: flex-end; }
   .chart-controls select { max-width: 125px; }
   .chart-controls label:nth-child(2) select { max-width: 105px; }
-  .chart-controls label:nth-child(3) select { max-width: 78px; }
+  .chart-controls label:nth-child(3) select { max-width: 104px; }
+  .chart-controls label:nth-child(4) select { max-width: 80px; }
   .overview-stats, .overview-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workbook-overview { padding: 19px; }
   .upload-modal { padding: 32px 22px 24px; }
@@ -883,7 +889,8 @@ body.dark .chart-area .grid-line, body.dark .mini-chart-area .grid-line { stroke
   .chart-controls { width: 100%; justify-content: flex-start; }
   .chart-controls select { max-width: 105px; }
   .chart-controls label:nth-child(2) select { max-width: 90px; }
-  .chart-controls label:nth-child(3) select { max-width: 68px; }
+  .chart-controls label:nth-child(3) select { max-width: 100px; }
+  .chart-controls label:nth-child(4) select { max-width: 76px; }
   .extra-controls select { max-width: 94px; }
   .donut-layout { gap: 4px; }
   .donut-chart-area { width: 50%; }
@@ -1025,11 +1032,15 @@ body.dark .empty-state-footnote { color: #969696; }
 body.dark .empty-state-footnote span { color: #8ed2a5; }
 body.dark .sidebar-empty-note { color: #aaa; }
 body.dark .chart-area text, body.dark .mini-chart-area text, body.dark .donut-chart-area text { fill: #bcbcbc !important; }
-body.dark .donut-chart-area text:first-of-type { fill: #f2f2f2 !important; }
-body.dark .donut-chart-area circle:first-child { stroke: #282828; }
+body.dark .donut-layout:not(.as-bars) .donut-chart-area text:first-of-type { fill: #f2f2f2 !important; }
+body.dark .donut-layout:not(.as-bars) .donut-chart-area circle:first-child { stroke: #282828; }
 body.dark .chart-area .grid-line, body.dark .mini-chart-area .grid-line { stroke: #292929 !important; }
 
 @media (max-width: 720px) {
   .empty-state { min-height: 400px; margin-top: 20px; padding: 30px 20px; }
   .empty-state-copy { font-size: 13px; }
 }
+
+/* Averages and negative values: the share panel shows full-width bars instead of a donut. */
+.donut-layout.as-bars .donut-chart-area { width: 100%; height: 180px; }
+.donut-layout.as-bars .donut-legend { display: none; }

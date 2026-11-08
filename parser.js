@@ -32,6 +32,13 @@
       const valid = local.getMonth() === month - 1 && local.getDate() === day && year >= 1900 && year <= 2200;
       return valid ? local : null;
     }
+    const dotted = text.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    if (dotted) {
+      const [day, month, year] = dotted.slice(1).map(Number);
+      const local = new Date(year, month - 1, day);
+      const valid = local.getMonth() === month - 1 && local.getDate() === day && year >= 1900 && year <= 2200;
+      return valid ? local : null;
+    }
     const date = new Date(text);
     if (Number.isNaN(date.getTime())) return null;
     if (date.getFullYear() < 1900 || date.getFullYear() > 2200) return null;
@@ -54,6 +61,43 @@
   function normalizeSheetDates(matrix) {
     const minute = 60000;
     return matrix.map((row) => row.map((value) => (value instanceof Date ? new Date(Math.round(value.getTime() / minute) * minute) : value)));
+  }
+  // Files written with a decimal comma ("1.234,56") are detected once per sheet, because a single
+  // value like "1,234" is ambiguous. Matching strings are rewritten to "1234.56" so toNumber reads them.
+  function numberCore(text) { return text.trim().replace(/^\(|\)$/g, '').replace(/^[-+]/, '').replace(/[$£€¥₹%\s]/g, ''); }
+  function usesDecimalComma(matrix) {
+    let comma = 0, dot = 0;
+    for (const row of matrix.slice(0, 2000)) {
+      for (const value of row) {
+        if (typeof value !== 'string') continue;
+        const core = numberCore(value);
+        if (!/^\d[\d.,]*$/.test(core)) continue;
+        if (/^\d{1,3}(\.\d{3})+,\d+$|^\d+,(\d{1,2}|\d{4,})$|^\d{1,3}(\.\d{3}){2,}$/.test(core)) comma += 1;
+        else if (/^\d{1,3}(,\d{3})+\.\d+$|^\d+\.(\d{1,2}|\d{4,})$|^\d{1,3}(,\d{3}){2,}$/.test(core)) dot += 1;
+      }
+    }
+    return comma > dot;
+  }
+  function normalizeNumberFormats(matrix) {
+    if (!usesDecimalComma(matrix)) return matrix;
+    return matrix.map((row) => row.map((value) => {
+      if (typeof value !== 'string' || !/^(\d{1,3}(\.\d{3})*|\d+)(,\d+)?$/.test(numberCore(value))) return value;
+      return value.replace(/\./g, '').replace(',', '.');
+    }));
+  }
+  function prepareMatrix(matrix) { return normalizeNumberFormats(normalizeSheetDates(matrix)); }
+  // The delimiter is the character that splits most lines into the same number of fields.
+  function detectDelimiter(text) {
+    const lines = text.split(/\r?\n/).filter((line) => line.trim()).slice(0, 30).map((line) => line.replace(/"[^"]*"/g, ''));
+    let best = ',', bestScore = 0;
+    for (const delimiter of ['\t', ';', ',']) {
+      const counts = lines.map((line) => line.split(delimiter).length - 1);
+      const frequency = new Map();
+      counts.forEach((count) => { if (count > 0) frequency.set(count, (frequency.get(count) || 0) + 1); });
+      const score = Math.max(0, ...frequency.values());
+      if (score > bestScore) { best = delimiter; bestScore = score; }
+    }
+    return best;
   }
   function isEmptyCell(value) { return value == null || String(value).trim() === ''; }
   function periodYear(value) {
@@ -126,6 +170,17 @@
   }
   function isCodeField(column) { return /^(rank|category|type)$/i.test(column); }
 
+  // Prices, rates and scores are averaged; adding them up across rows means nothing.
+  function defaultAggregation(column, rows) {
+    if (/^(total|sum)\b|\btotal$|amount|revenue|sales/i.test(column)) return 'sum';
+    if (/price|rate\b|ratio|percent|pct|%|\bavg\b|average|mean|median|score|rating|\bage\b|\bper\s|growth|yield|utili[sz]ation/i.test(column)) return 'mean';
+    const values = columnValues(column, rows);
+    const percentText = values.filter((value) => typeof value === 'string' && /%\s*$/.test(value)).length;
+    if (values.length && percentText / values.length >= 0.5) return 'mean';
+    if (/margin|share|conversion/i.test(column) && values.length && values.every((value) => Math.abs(toNumber(value)) <= 1.5)) return 'mean';
+    return 'sum';
+  }
+
   function chooseMetric(columns, rows) {
     const numeric = columns.filter((column) => {
       const values = rows.map((row) => row[column]).filter((value) => !isEmptyCell(value));
@@ -168,6 +223,44 @@
   function isTotalHeader(value) { return /^(grand\s+total|total\s+result|overall\s+total|total)$/i.test(cellText(value)); }
   function isTotalRow(value) { return /^(?:(?:.*\s)?(?:sub[\s-]?)?totals?|total\s+result):?$/i.test(cellText(value)); }
   function firstFilled(values) { return values.find((value) => !isEmptyCell(value)); }
+  // A row is a summary if it is labelled Total (first filled cell), or if its label cells are blank
+  // or say Total somewhere and every number equals the sum of the rows above it.
+  function dropSummaryRows(entries, labelKeys, numericKeys) {
+    const zero = () => Object.fromEntries(numericKeys.map((key) => [key, 0]));
+    let block = zero(), blockCount = 0, running = zero(), runningCount = 0, excluded = 0;
+    const kept = [];
+    const close = (a, b) => Math.abs(a - b) <= Math.max(0.005, Math.abs(b) * 1e-6);
+    for (const { cells, first } of entries) {
+      if (isTotalRow(first)) { excluded += 1; block = zero(); blockCount = 0; continue; }
+      const labels = labelKeys.map((key) => cells[key]);
+      const blankLabels = labelKeys.length > 0 && labels.every(isEmptyCell);
+      const totalLabel = labels.some((value) => isTotalRow(value));
+      if (blankLabels || totalLabel) {
+        const filled = numericKeys.filter((key) => Number.isFinite(toNumber(cells[key])));
+        const minimum = totalLabel ? 1 : 2;
+        const matches = (sums, count) => count >= minimum && filled.length > 0 && filled.some((key) => toNumber(cells[key]) !== 0)
+          && filled.every((key) => close(toNumber(cells[key]), sums[key]));
+        if (matches(block, blockCount) || matches(running, runningCount)) { excluded += 1; block = zero(); blockCount = 0; continue; }
+      }
+      kept.push(cells);
+      numericKeys.forEach((key) => {
+        const value = toNumber(cells[key]);
+        if (Number.isFinite(value)) { block[key] += value; running[key] += value; }
+      });
+      blockCount += 1; runningCount += 1;
+    }
+    return { kept, excluded };
+  }
+  function splitKeys(entries, keys) {
+    const numericKeys = [], labelKeys = [];
+    keys.forEach((key) => {
+      const values = entries.map(({ cells }) => cells[key]).filter((value) => !isEmptyCell(value));
+      if (!values.length) return;
+      const numeric = values.filter((value) => Number.isFinite(toNumber(value)) && !(value instanceof Date)).length / values.length;
+      (numeric >= 0.62 ? numericKeys : labelKeys).push(key);
+    });
+    return { numericKeys, labelKeys };
+  }
   function rowValue(matrix, rowIndex, colIndex) { return matrix[rowIndex]?.[colIndex] ?? ''; }
   function parentYearForColumn(matrix, headerRow, column) {
     for (let rowIndex = headerRow - 1; rowIndex >= Math.max(0, headerRow - 4); rowIndex -= 1) {
@@ -310,10 +403,13 @@
     const otherColumns = candidate.columns.map((column, index) => ({ column, name: headers[index], index }))
       .filter((item) => !periods.some((period) => period.column === item.column) && !isTotalHeader(item.name));
     const output = [];
-    let excludedTotalRows = 0;
+    const entries = [];
     for (let r = candidate.startRow; r <= candidate.dataEnd; r += 1) {
       const source = matrix[r] || [];
-      if (isTotalRow(firstFilled(otherColumns.map(({ column }) => source[column])))) { excludedTotalRows += 1; continue; }
+      entries.push({ cells: source, first: firstFilled(otherColumns.map(({ column }) => source[column])) });
+    }
+    const { kept, excluded: excludedTotalRows } = dropSummaryRows(entries, otherColumns.map(({ column }) => column), periods.map(({ column }) => column));
+    for (const source of kept) {
       const dimensions = {};
       otherColumns.forEach(({ column, name }) => { dimensions[name] = cleanCell(source[column]); });
       const perGroup = new Map();
@@ -332,17 +428,17 @@
     return { rows: output, headers: [...otherColumns.map((item) => item.name), 'Period', ...groups], startRow: candidate.startRow, dataEnd: candidate.dataEnd, score: candidate.score + output.length / 100, support: candidate.support, periodColumn: 'Period', measureGroups: groups, excludedTotalRows };
   }
   function regularCandidateRows(matrix, candidate) {
-    const output = [];
-    let excludedTotalRows = 0;
+    const entries = [];
     for (let r = candidate.startRow; r <= candidate.dataEnd; r += 1) {
       const source = matrix[r] || [];
       if (!candidate.columns.some((column) => !isEmptyCell(source[column]))) continue;
       const row = Object.fromEntries(candidate.columns.map((column, index) => [candidate.headers[index], cleanCell(source[column])]));
-      if (isTotalRow(firstFilled(candidate.columns.map((column) => source[column])))) { excludedTotalRows += 1; continue; }
       const notEmpty = Object.values(row).filter((value) => !isEmptyCell(value)).length;
-      if (notEmpty >= Math.min(2, candidate.columns.length)) output.push(row);
+      if (notEmpty >= Math.min(2, candidate.columns.length)) entries.push({ cells: row, first: firstFilled(candidate.columns.map((column) => source[column])) });
     }
-    return { rows: output, excludedTotalRows };
+    const { numericKeys, labelKeys } = splitKeys(entries, candidate.headers);
+    const { kept, excluded } = dropSummaryRows(entries, labelKeys, numericKeys);
+    return { rows: kept, excludedTotalRows: excluded };
   }
   function extractTables(matrix, sheetName) {
     const candidates = [];
@@ -409,7 +505,7 @@
     const title = table.tableLabel || `${baseSheetTitle}${tableIndex > 0 ? ` · Table ${tableIndex + 1}` : ''}`;
     const hint = unique(table.measureGroups || []);
     const rowScore = Math.log10(rows.length + 1) * 6 + Math.min(metrics.length, 5) * 2 + Math.min(dimensions.length, 7) + (dateCandidate ? 3 : 0) + (hint.length ? 1 : 0);
-    return { rows, columns, metrics, dimensions, dateColumn: dateCandidate, periodColumn, reshapedPeriods: Boolean(table.periodColumn), excludedTotalRows: table.excludedTotalRows || 0, categoryDimension, regionDimension, sheetName, tableIndex, title, fileName, currencySymbol, tableScore: table.score || 0, rankScore: rowScore };
+    return { rows, columns, metrics, dimensions, dateColumn: dateCandidate, periodColumn, reshapedPeriods: Boolean(table.periodColumn), excludedTotalRows: table.excludedTotalRows || 0, aggregations: Object.fromEntries(metrics.map((metric) => [metric, defaultAggregation(metric, rows)])), categoryDimension, regionDimension, sheetName, tableIndex, title, fileName, currencySymbol, tableScore: table.score || 0, rankScore: rowScore };
   }
 
   function stripExtension(filename) { return String(filename || '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); }
@@ -467,15 +563,18 @@
     return '';
   }
 
-  function sumColumn(rows, metric, columns) {
+  // method is 'sum' or 'mean'; mean ignores blank and non-numeric cells.
+  function metricTotal(rows, metric, columns, method = 'sum') {
     if (!metric || metric === 'Records' || !columns.includes(metric)) return rows.length;
-    return rows.reduce((sum, row) => {
+    let sum = 0, count = 0;
+    rows.forEach((row) => {
       const value = toNumber(row[metric]);
-      return sum + (Number.isFinite(value) ? value : 0);
-    }, 0);
+      if (Number.isFinite(value)) { sum += value; count += 1; }
+    });
+    return method === 'mean' ? (count ? sum / count : 0) : sum;
   }
-  function aggregate(rows, dimension, metric, { columns, dateColumn, periodColumn, sort = false }) {
-    if (!dimension) return [{ key: 'All records', label: 'All records', value: sumColumn(rows, metric, columns) }];
+  function aggregate(rows, dimension, metric, { columns, dateColumn, periodColumn, sort = false, method = 'sum' }) {
+    if (!dimension) return [{ key: 'All records', label: 'All records', value: metricTotal(rows, metric, columns, method) }];
     const groups = new Map();
     rows.forEach((row) => {
       const raw = row[dimension];
@@ -484,18 +583,30 @@
       const key = date ? (periodLabel ? String(raw).trim() : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`) : String(raw ?? 'Unknown').trim() || 'Unknown';
       const label = date ? (periodLabel ? String(raw).trim() : date.toLocaleDateString(undefined, { month: 'short', year: '2-digit' })) : key;
       const value = metric && columns.includes(metric) ? toNumber(row[metric]) : 1;
-      const current = groups.get(key) || { key, label, value: 0, sortValue: date?.getTime() ?? null };
-      current.value += Number.isFinite(value) ? value : 0;
+      const current = groups.get(key) || { key, label, value: 0, sum: 0, count: 0, sortValue: date?.getTime() ?? null };
+      if (Number.isFinite(value)) { current.sum += value; current.count += 1; }
       groups.set(key, current);
     });
     const result = [...groups.values()];
+    result.forEach((group) => { group.value = method === 'mean' ? (group.count ? group.sum / group.count : 0) : group.sum; });
     if (dimension === dateColumn) result.sort((a, b) => (a.sortValue ?? Number.MAX_SAFE_INTEGER) - (b.sortValue ?? Number.MAX_SAFE_INTEGER) || a.key.localeCompare(b.key, undefined, { numeric: true }));
     else if (sort) result.sort((a, b) => b.value - a.value);
     return result;
   }
 
+  // Dates export as calendar text, and text that Excel would run as a formula gets a leading quote.
+  function csvCell(value) {
+    let text;
+    if (value instanceof Date) {
+      const time = value.getHours() || value.getMinutes() ? ` ${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}` : '';
+      text = `${localDay(value)}${time}`;
+    } else text = String(value ?? '');
+    if (typeof value === 'string' && /^[=+\-@\t\r]/.test(text) && !/^[+-]?[\d.,\s]+%?$/.test(text)) text = `'${text}`;
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
   return {
-    sumColumn, aggregate,
+    metricTotal, aggregate, csvCell, prepareMatrix, detectDelimiter, normalizeNumberFormats, defaultAggregation,
     toNumber, parseDate, unique, cleanCell, cellText, isEmptyCell, parsePeriodHeader, isTotalRow,
     chooseMetric, extractTables, datasetProfile, stripExtension, parseDelimited, detectCurrency, normalizeSheetDates,
   };

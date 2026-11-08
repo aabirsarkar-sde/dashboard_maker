@@ -25,8 +25,13 @@ function createElement(id) {
 }
 
 function bootDashboard() {
+  // Only ids that exist in index.html (or are created at runtime) resolve, as in the browser.
+  const pageIds = new Set([...fs.readFileSync(path.join(root, 'index.html'), 'utf8').matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]));
   const elements = {};
-  const element = (id) => (elements[id] ||= createElement(id));
+  const element = (id) => {
+    if (!pageIds.has(id) && !/^extra-chart-\d+$/.test(id)) throw new Error(`#${id} is not in index.html`);
+    return (elements[id] ||= createElement(id));
+  };
   const context = {
     console, setTimeout, clearTimeout,
     Option: function Option(label, value) { this.label = label; this.value = value; },

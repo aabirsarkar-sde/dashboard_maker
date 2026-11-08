@@ -20,7 +20,10 @@ Run `node --test "test/*.test.js"` (Node 22, no dependencies). `parser.js` holds
 - Atlas opens the strongest detected table as a dashboard right away. Use **All sheets** to see every detected table and scanned worksheet, then open any view from its card or tab.
 - Each dashboard includes summary cards, a trend chart, category and region breakdowns, insights, and a ranked table when the detected fields support them.
 - Change the primary metric, grouping, chart style, filters, and number of ranked rows directly in the dashboard.
+- Prices, rates, scores and ratio-style margins are averaged by default; amounts and counts are totalled. Switch with the Total/Average control or say “average price by region”.
+- Comma, semicolon and tab separated files are detected, including European number and date formats such as `1.234,56` and `31.01.2025`.
+- Total, subtotal and unlabelled total rows are left out of the numbers when their values add up, and the subtitle says how many were excluded.
 - Add custom charts or enter instructions such as “show profit by region”, “filter to West”, “switch to a bar chart”, “show top 10”, or “what stands out?”
-- Export the filtered source rows as CSV.
+- Export the filtered source rows as CSV. Dates export as calendar dates, and text that a spreadsheet would run as a formula is prefixed with a quote.
 
 Recognized instructions are applied locally. For more open-ended dashboard requests, the Gemini endpoint returns a structured action; the browser validates that action against the fields in the current workbook before changing the dashboard. The endpoint applies same-origin checks, request-size limits, and a best-effort per-IP rate limit.
